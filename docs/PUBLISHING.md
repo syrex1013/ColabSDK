@@ -137,11 +137,14 @@ bun add @syrex1013/colab-sdk
 
 | Problem | Fix |
 |---------|-----|
+| Actions job never starts — *billing issue* | [GitHub Billing settings](https://github.com/settings/billing) → resolve payment/budget. Public repos normally get free minutes; account lock blocks all workflows. |
 | `403 Forbidden` on publish | Token lacks write access or wrong npm scope |
+| `404` on `@colab/*` scope | Use `@syrex1013/colab-sdk` or create the `@colab` npm organization |
 | `402 Payment Required` | Scoped package needs `--access public` (already in workflow) |
 | Coverage gate fails | Run `bun run test:coverage` locally and add tests |
 | Version already exists | Bump version with `npm version patch` |
 | `NPM_TOKEN` not set | Add secret under repo Settings → Secrets |
+| `npm install` 404 right after first publish | Wait 5–15 minutes for registry index propagation, or install tarball URL from `npm view @syrex1013/colab-sdk@0.1.0 dist.tarball` |
 
 ## Where docs live after release
 
