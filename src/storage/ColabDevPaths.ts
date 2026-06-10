@@ -11,6 +11,7 @@ export class ColabDevPaths {
   readonly settingsFile: string;
   readonly sessionFile: string;
   readonly debugDir: string;
+  readonly workflowsDir: string;
 
   constructor(rootDir?: string) {
     this.root = rootDir ?? join(process.cwd(), process.env.COLABDEV_DIR ?? DEFAULT_DIR);
@@ -18,11 +19,13 @@ export class ColabDevPaths {
     this.settingsFile = join(this.root, 'settings.json');
     this.sessionFile = join(this.root, 'session.json');
     this.debugDir = join(this.root, 'debug');
+    this.workflowsDir = join(this.root, 'workflows');
   }
 
   async ensureDirs(): Promise<void> {
     await mkdir(this.browserProfile, { recursive: true });
     await mkdir(this.debugDir, { recursive: true });
+    await mkdir(this.workflowsDir, { recursive: true });
   }
 
   async loadSettings(): Promise<ColabSettings> {

@@ -10,6 +10,12 @@ export type ColabErrorCode =
   | 'CELL_NOT_FOUND'
   | 'BROWSER_ERROR'
   | 'TOOL_NOT_AVAILABLE'
+  | 'WORKFLOW_NOT_FOUND'
+  | 'WORKFLOW_NOT_LOADED'
+  | 'WORKFLOW_ALREADY_LOADED'
+  | 'WORKFLOW_EXECUTION_ERROR'
+  | 'FILE_UPLOAD_ERROR'
+  | 'UPLOAD_WIDGET_NOT_FOUND'
   | 'UNKNOWN';
 
 export class ColabSDKError extends Error {
@@ -121,6 +127,78 @@ export class ToolNotAvailableError extends ColabSDKError {
     super(`Required MCP tool not available: ${toolName}`, 'TOOL_NOT_AVAILABLE', cause);
     this.name = 'ToolNotAvailableError';
     this.toolName = toolName;
+  }
+}
+
+export class WorkflowNotFoundError extends ColabSDKError {
+  readonly workflowId: string;
+
+  constructor(workflowId: string, cause?: unknown) {
+    super(`Workflow not found: ${workflowId}`, 'WORKFLOW_NOT_FOUND', cause);
+    this.name = 'WorkflowNotFoundError';
+    this.workflowId = workflowId;
+  }
+}
+
+export class WorkflowNotLoadedError extends ColabSDKError {
+  readonly workflowId: string;
+
+  constructor(workflowId: string, cause?: unknown) {
+    super(`Workflow is not loaded: ${workflowId}`, 'WORKFLOW_NOT_LOADED', cause);
+    this.name = 'WorkflowNotLoadedError';
+    this.workflowId = workflowId;
+  }
+}
+
+export class WorkflowAlreadyLoadedError extends ColabSDKError {
+  readonly workflowId: string;
+
+  constructor(workflowId: string, cause?: unknown) {
+    super(`Workflow is already loaded: ${workflowId}`, 'WORKFLOW_ALREADY_LOADED', cause);
+    this.name = 'WorkflowAlreadyLoadedError';
+    this.workflowId = workflowId;
+  }
+}
+
+export class FileUploadError extends ColabSDKError {
+  readonly cellId: string;
+  readonly result?: unknown;
+
+  constructor(message: string, cellId: string, result?: unknown, cause?: unknown) {
+    super(message, 'FILE_UPLOAD_ERROR', cause);
+    this.name = 'FileUploadError';
+    this.cellId = cellId;
+    this.result = result;
+  }
+}
+
+export class UploadWidgetNotFoundError extends ColabSDKError {
+  readonly cellId: string;
+
+  constructor(cellId: string, cause?: unknown) {
+    super(`File upload widget not found in cell: ${cellId}`, 'UPLOAD_WIDGET_NOT_FOUND', cause);
+    this.name = 'UploadWidgetNotFoundError';
+    this.cellId = cellId;
+  }
+}
+
+export class WorkflowExecutionError extends ColabSDKError {
+  readonly workflowId: string;
+  readonly stepIndex?: number;
+  readonly steps?: unknown;
+
+  constructor(
+    message: string,
+    workflowId: string,
+    stepIndex?: number,
+    steps?: unknown,
+    cause?: unknown,
+  ) {
+    super(message, 'WORKFLOW_EXECUTION_ERROR', cause);
+    this.name = 'WorkflowExecutionError';
+    this.workflowId = workflowId;
+    this.stepIndex = stepIndex;
+    this.steps = steps;
   }
 }
 

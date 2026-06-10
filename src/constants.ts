@@ -27,6 +27,20 @@ export const TOOL_GET_CELLS = 'get_cells';
 export const TOOL_UPDATE_CELL = 'update_cell';
 export const TOOL_MOVE_CELL = 'move_cell';
 
+export const TOOL_LIST_WORKFLOWS = 'list_workflows';
+export const TOOL_LOAD_WORKFLOW = 'load_workflow';
+export const TOOL_UNLOAD_WORKFLOW = 'unload_workflow';
+export const TOOL_RUN_WORKFLOW = 'run_workflow';
+export const TOOL_STOP_WORKFLOW = 'stop_workflow';
+
+export const WORKFLOW_MCP_TOOLS = [
+  TOOL_LIST_WORKFLOWS,
+  TOOL_LOAD_WORKFLOW,
+  TOOL_UNLOAD_WORKFLOW,
+  TOOL_RUN_WORKFLOW,
+  TOOL_STOP_WORKFLOW,
+] as const;
+
 export const REQUIRED_TOOLS = [
   TOOL_ADD_CODE_CELL,
   TOOL_ADD_TEXT_CELL,

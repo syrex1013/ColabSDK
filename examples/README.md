@@ -25,6 +25,8 @@ bun run example:login    # once — saves session to .colabdev/
 | 06 | `06_select_gpu.ts` | `bun run example:gpu` | GPU runtime selection and health check |
 | 07 | `07_notebook_workflow.ts` | `bun run example:workflow` | Markdown + code cells + `runAll()` |
 | 08 | `08_error_handling.ts` | `bun run example:errors` | Typed `ColabSDKError` hierarchy |
+| 09 | `09_workflow_management.ts` | `bun run example:workflows` | List, load, run, stream, unload workflows |
+| 10 | `10_file_upload.ts` | `bun run example:upload` | Upload local files with progress into `files.upload()` cells |
 | — | `sdk_smoke_test.ts` | `bun run test:sdk` | Full API integration smoke test |
 
 ---

@@ -15,6 +15,8 @@ Programmatic TypeScript API for [**@syrex1013/colab-sdk**](https://www.npmjs.com
 - [CellManager](#cellmanager)
 - [ExecutionManager](#executionmanager)
 - [RuntimeManager](#runtimemanager)
+- [WorkflowManager](#workflowmanager)
+- [FileUploadManager](#fileuploadmanager)
 - [ColabDevPaths](#colabdevpaths)
 - [Types](#types)
 - [Constants](#constants)
@@ -70,6 +72,8 @@ new ColabClient(rootDir?: string)
 | `cells` | `CellManager` | Notebook cell operations |
 | `execute` | `ExecutionManager` | Code execution |
 | `runtime` | `RuntimeManager` | GPU and runtime control |
+| `workflows` | `WorkflowManager` | Local and uploaded workflow orchestration |
+| `files` | `FileUploadManager` | Upload local files into notebook upload widgets |
 
 ### Methods
 
@@ -211,6 +215,92 @@ Accessed via `client.runtime`. **Requires an active connection.**
 | `health` | `() => Promise<RuntimeHealth>` | Run a health-check cell and return status |
 
 **Supported GPU values:** `'cpu'` · `'t4'` · `'a100'` · `'v100'` · `'l4'` · `'tpu'`
+
+---
+
+## WorkflowManager
+
+Accessed via `client.workflows`. Manages multi-step notebook workflows stored as JSON files under `.colabdev/workflows/`, with optional delegation to Colab MCP workflow tools when available.
+
+### Workflow definition format
+
+```json
+{
+  "id": "hello-world",
+  "name": "Hello World",
+  "description": "Optional summary",
+  "version": "1.0.0",
+  "gpu": "t4",
+  "steps": [
+    { "type": "markdown", "source": "# Title" },
+    { "type": "code", "source": "print('ok')" }
+  ]
+}
+```
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `list` | `(filter?: 'all' \| 'local' \| 'uploaded') => Promise<WorkflowInfo[]>` | List local and loaded workflows |
+| `get` | `(idOrPath) => Promise<WorkflowDefinition>` | Read a workflow definition |
+| `save` | `(definition) => Promise<string>` | Save a workflow to `.colabdev/workflows/` |
+| `upload` | `(filePath, { load? }) => Promise<WorkflowInfo>` | Register a local file and optionally load it |
+| `load` | `(idOrPath, { gpu? }) => Promise<LoadedWorkflow>` | Load workflow cells into the notebook |
+| `unload` | `(id) => Promise<void>` | Remove loaded workflow cells |
+| `run` | `(id, { autoLoad?, gpu? }) => Promise<WorkflowRunResult>` | Run all code steps sequentially |
+| `runStream` | `(id, options?) => AsyncGenerator<WorkflowStreamChunk>` | Stream output while running |
+| `stop` | `() => Promise<void>` | Interrupt the running workflow |
+| `isRunning` | `() => boolean` | Whether a workflow run is in progress |
+| `runningId` | `() => string \| null` | ID of the active workflow run |
+
+```typescript
+await client.workflows.upload('./my.workflow.json');
+const result = await client.workflows.run('my-workflow');
+
+for await (const chunk of client.workflows.runStream('my-workflow')) {
+  console.log(chunk.stepIndex, chunk.type, chunk.text);
+}
+```
+
+**Throws:** `WorkflowNotFoundError`, `WorkflowNotLoadedError`, `WorkflowAlreadyLoadedError`, `WorkflowExecutionError`.
+
+When Colab exposes MCP tools (`list_workflows`, `load_workflow`, `unload_workflow`, `run_workflow`, `stop_workflow`), the manager uses them automatically; otherwise it falls back to cell-based execution.
+
+---
+
+## FileUploadManager
+
+Accessed via `client.files`. Uploads local files into Colab cells that use `google.colab.files.upload()` or similar file-upload widgets. The manager tries the browser widget first (run cell → fill file input via Playwright → watch progress). When the widget is unavailable (common with MCP `run_code_cell`), it falls back to writing files into `/content` via temporary runtime cells.
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `findUploadCells` | `() => Promise<UploadCellInfo[]>` | Scan notebook for upload cells |
+| `upload` | `(ref, filePaths, options?) => Promise<FileUploadResult>` | Upload file(s) with optional `onProgress` callback |
+| `watchUpload` | `(ref, filePaths, options?) => AsyncGenerator<UploadProgressEvent>` | Stream upload progress events |
+
+```typescript
+const cell = await client.cells.createCode(
+  'from google.colab import files\nuploaded = files.upload()',
+);
+
+for await (const event of client.files.watchUpload(cell.cellId, './data.csv')) {
+  console.log(event.phase, event.percent, event.message);
+}
+```
+
+| Option | Type | Description |
+|--------|------|-------------|
+| `runCell` | `boolean` | Run the cell to show the widget (default: `true`) |
+| `widgetTimeoutMs` | `number` | Wait for widget (default: 120 000 ms) |
+| `uploadTimeoutMs` | `number` | Wait for upload completion (default: 300 000 ms) |
+| `runtimeFallback` | `boolean` | Write to `/content` when widget is missing (default: `true`) |
+| `runtimeOnly` | `boolean` | Skip widget flow and upload via runtime only |
+| `onProgress` | `(event) => void` | Progress callback for `upload()` |
+
+`FileUploadResult.method` is `'widget'` or `'runtime'`. Runtime uploads set `remotePaths` (e.g. `/content/data.csv`).
+
+**Progress phases:** `starting` · `waiting` · `uploading` · `processing` · `complete` · `error`
+
+**Throws:** `FileUploadError`, `UploadWidgetNotFoundError`
 
 ---
 
@@ -368,6 +458,12 @@ All errors extend `ColabSDKError`, which provides:
 | `CellNotFoundError` | `CELL_NOT_FOUND` | Invalid cell reference |
 | `BrowserError` | `BROWSER_ERROR` | Browser automation failure |
 | `ToolNotAvailableError` | `TOOL_NOT_AVAILABLE` | Required MCP tool missing |
+| `WorkflowNotFoundError` | `WORKFLOW_NOT_FOUND` | Workflow file or ID not found |
+| `WorkflowNotLoadedError` | `WORKFLOW_NOT_LOADED` | `run()` called without loading |
+| `WorkflowAlreadyLoadedError` | `WORKFLOW_ALREADY_LOADED` | Duplicate `load()` |
+| `WorkflowExecutionError` | `WORKFLOW_EXECUTION_ERROR` | Step failed during `run()` |
+| `FileUploadError` | `FILE_UPLOAD_ERROR` | File upload to cell failed |
+| `UploadWidgetNotFoundError` | `UPLOAD_WIDGET_NOT_FOUND` | No file input in cell output |
 
 ### `wrapError(err, fallbackMessage): ColabSDKError`
 

@@ -13,6 +13,12 @@ import {
   RuntimeDisconnectedError,
   ToolNotAvailableError,
   TwoFactorPendingError,
+  FileUploadError,
+  UploadWidgetNotFoundError,
+  WorkflowAlreadyLoadedError,
+  WorkflowExecutionError,
+  WorkflowNotFoundError,
+  WorkflowNotLoadedError,
   wrapError,
 } from '../src/errors/index.js';
 
@@ -55,5 +61,11 @@ describe('errors', () => {
     expect(new ExecutionInterruptedError().code).toBe('EXECUTION_INTERRUPTED');
     expect(new BrowserError('x').code).toBe('BROWSER_ERROR');
     expect(new ToolNotAvailableError('foo').toolName).toBe('foo');
+    expect(new WorkflowNotFoundError('wf').workflowId).toBe('wf');
+    expect(new WorkflowNotLoadedError('wf').code).toBe('WORKFLOW_NOT_LOADED');
+    expect(new WorkflowAlreadyLoadedError('wf').code).toBe('WORKFLOW_ALREADY_LOADED');
+    expect(new WorkflowExecutionError('fail', 'wf', 1).stepIndex).toBe(1);
+    expect(new FileUploadError('x', 'c1').cellId).toBe('c1');
+    expect(new UploadWidgetNotFoundError('c1').code).toBe('UPLOAD_WIDGET_NOT_FOUND');
   });
 });

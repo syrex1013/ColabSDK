@@ -12,7 +12,14 @@ import {
   PLAYWRIGHT_NAV_TIMEOUT_MS,
   RUNTIME_DIALOG_TIMEOUT_MS,
 } from '../constants.js';
-import { BrowserError, LoginRequiredError, TwoFactorPendingError, wrapError } from '../errors/index.js';
+import {
+  BrowserError,
+  LoginRequiredError,
+  TwoFactorPendingError,
+  UploadWidgetNotFoundError,
+  wrapError,
+} from '../errors/index.js';
+import { mergeUploadDomState, type CellUploadDomState } from '../files/cellUploadUtils.js';
 import type { ColabDevPaths } from '../storage/ColabDevPaths.js';
 import type { RuntimeType } from '../types/index.js';
 import {
@@ -289,6 +296,187 @@ export class BrowserSession {
     } catch (err) {
       throw new BrowserError('Failed to interrupt execution', err);
     }
+  }
+
+  /** Run a notebook cell from the Colab UI so MCP stays free for other tool calls. */
+  async runCellViaBrowser(cellId: string, cellIndex: number): Promise<void> {
+    const page = this.requirePage();
+    try {
+      const result = await page.evaluate(
+        ({ id, index }) => {
+          const findCell = (): Element | null => {
+            const escaped = CSS.escape(id);
+            const byAttr = document.querySelector(`[data-cell-id="${id}"], #${escaped}`);
+            if (byAttr) return byAttr;
+            const cells = document.querySelectorAll('colab-cell, .cell');
+            return cells.item(index) ?? null;
+          };
+
+          const tryClickRun = (root: Element | Document | ShadowRoot): boolean => {
+            const selectors = [
+              'colab-run-button',
+              '[aria-label*="Run cell" i]',
+              '[aria-label*="Play" i]',
+              'button[title*="Run" i]',
+            ];
+            for (const selector of selectors) {
+              const button = root.querySelector(selector);
+              if (button instanceof HTMLElement) {
+                button.click();
+                return true;
+              }
+            }
+            if ('querySelectorAll' in root) {
+              const elements = Array.from(root.querySelectorAll('*'));
+              for (const el of elements) {
+                if (el.shadowRoot && tryClickRun(el.shadowRoot)) return true;
+              }
+            }
+            return false;
+          };
+
+          const cell = findCell();
+          if (!cell) return { ok: false as const, reason: 'cell-not-found' };
+          cell.scrollIntoView({ block: 'center' });
+          if (tryClickRun(cell)) return { ok: true as const, method: 'button' as const };
+
+          const editor = cell.querySelector(
+            '.monaco-editor, textarea, [contenteditable="true"], .inputarea',
+          );
+          if (editor instanceof HTMLElement) {
+            editor.click();
+            return { ok: true as const, method: 'keyboard' as const };
+          }
+
+          return { ok: false as const, reason: 'no-run-control' };
+        },
+        { id: cellId, index: cellIndex },
+      );
+
+      if (!result.ok) {
+        throw new BrowserError(`Failed to run cell ${cellId}: ${result.reason}`);
+      }
+
+      if (result.method === 'keyboard') {
+        await page.keyboard.press('Control+Enter');
+        await page.keyboard.press('Meta+Enter');
+      }
+    } catch (err) {
+      if (err instanceof BrowserError) throw err;
+      throw new BrowserError(`Failed to run cell ${cellId} in browser`, err);
+    }
+  }
+
+  async waitForCellFileInput(
+    cellId: string,
+    cellIndex: number,
+    timeoutMs = 120_000,
+  ): Promise<void> {
+    const page = this.requirePage();
+    const start = Date.now();
+
+    while (Date.now() - start < timeoutMs) {
+      const state = await this.readCellUploadState(cellId, cellIndex);
+      if (state.hasFileInput) return;
+      await page.waitForTimeout(250);
+    }
+
+    throw new UploadWidgetNotFoundError(cellId);
+  }
+
+  async setCellUploadFiles(cellId: string, cellIndex: number, files: string[]): Promise<void> {
+    const page = this.requirePage();
+    try {
+      const handle = await page.evaluateHandle(
+        ({ id, index }) => {
+          const findCell = (): Element | null => {
+            const escaped = CSS.escape(id);
+            const byAttr = document.querySelector(`[data-cell-id="${id}"], #${escaped}`);
+            if (byAttr) return byAttr;
+            const cells = document.querySelectorAll('colab-cell, .cell');
+            return cells.item(index) ?? null;
+          };
+
+          const collectInputs = (root: Element | Document | ShadowRoot): HTMLInputElement[] => {
+            const inputs: HTMLInputElement[] = [];
+            root.querySelectorAll('input[type="file"]').forEach((el) => {
+              if (el instanceof HTMLInputElement) inputs.push(el);
+            });
+            root.querySelectorAll('*').forEach((el) => {
+              if (el.shadowRoot) inputs.push(...collectInputs(el.shadowRoot));
+            });
+            return inputs;
+          };
+
+          const cell = findCell();
+          if (!cell) return null;
+          const inputs = collectInputs(cell);
+          return inputs[0] ?? null;
+        },
+        { id: cellId, index: cellIndex },
+      );
+
+      const element = handle.asElement();
+      if (!element) {
+        await handle.dispose();
+        throw new UploadWidgetNotFoundError(cellId);
+      }
+
+      await element.setInputFiles(files);
+      await handle.dispose();
+    } catch (err) {
+      if (err instanceof UploadWidgetNotFoundError) throw err;
+      throw new BrowserError(`Failed to set upload files on cell ${cellId}`, err);
+    }
+  }
+
+  async readCellUploadState(cellId: string, cellIndex: number): Promise<CellUploadDomState> {
+    const page = this.requirePage();
+    const raw = await page.evaluate(
+      ({ id, index }) => {
+        const findCell = (): Element | null => {
+          const escaped = CSS.escape(id);
+          const byAttr = document.querySelector(`[data-cell-id="${id}"], #${escaped}`);
+          if (byAttr) return byAttr;
+          const cells = document.querySelectorAll('colab-cell, .cell');
+          return cells.item(index) ?? null;
+        };
+
+        const collectInputs = (root: Element | Document | ShadowRoot): HTMLInputElement[] => {
+          const inputs: HTMLInputElement[] = [];
+          root.querySelectorAll('input[type="file"]').forEach((el) => {
+            if (el instanceof HTMLInputElement) inputs.push(el);
+          });
+          root.querySelectorAll('*').forEach((el) => {
+            if (el.shadowRoot) inputs.push(...collectInputs(el.shadowRoot));
+          });
+          return inputs;
+        };
+
+        const cell = findCell();
+        if (!cell) {
+          return {
+            hasFileInput: false,
+            fileInputCount: 0,
+            textContent: '',
+          };
+        }
+
+        const inputs = collectInputs(cell);
+        const textContent = (cell as HTMLElement).innerText ?? '';
+        const progress = cell.querySelector('progress');
+        return {
+          hasFileInput: inputs.length > 0,
+          fileInputCount: inputs.length,
+          textContent,
+          progressValue: progress ? progress.value : undefined,
+          progressMax: progress ? progress.max : undefined,
+        };
+      },
+      { id: cellId, index: cellIndex },
+    );
+
+    return mergeUploadDomState(raw);
   }
 
   async stopRuntime(): Promise<void> {

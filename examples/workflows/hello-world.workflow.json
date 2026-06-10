@@ -1,0 +1,16 @@
+{
+  "id": "hello-world",
+  "name": "Hello World",
+  "description": "Minimal two-step workflow demo",
+  "version": "1.0.0",
+  "steps": [
+    {
+      "type": "markdown",
+      "source": "# Hello from ColabSDK workflow"
+    },
+    {
+      "type": "code",
+      "source": "message = 'workflow-ok'\nprint(message)"
+    }
+  ]
+}

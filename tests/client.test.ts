@@ -59,6 +59,8 @@ describe('ColabClient', () => {
     expect(client.cells).toBeDefined();
     expect(client.execute).toBeDefined();
     expect(client.runtime).toBeDefined();
+    expect(client.workflows).toBeDefined();
+    expect(client.files).toBeDefined();
   });
 
   it('connects, saves session, and returns status', async () => {

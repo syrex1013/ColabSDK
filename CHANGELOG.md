@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-06-10
+
+### Added
+
+- `WorkflowManager` on `client.workflows` — list, upload, load, unload, run, stop workflows
+- Local workflow JSON definitions in `.colabdev/workflows/`
+- Streaming workflow execution via `runStream()`
+- MCP workflow tool delegation when Colab exposes `list_workflows`, `load_workflow`, etc.
+- Workflow error types: `WorkflowNotFoundError`, `WorkflowNotLoadedError`, `WorkflowAlreadyLoadedError`, `WorkflowExecutionError`
+- CLI: `colab-dev workflows list|load|unload|run|stop|upload`
+- Example: `examples/09_workflow_management.ts` (`bun run example:workflows`)
+- `FileUploadManager` on `client.files` — upload local files into cells with `files.upload()` widgets
+- Upload progress watching via `onProgress` callback and `watchUpload()` async generator
+- `findUploadCells()` to scan notebook for upload-capable cells
+- Errors: `FileUploadError`, `UploadWidgetNotFoundError`
+- CLI: `colab-dev files list-upload-cells`, `colab-dev files upload <cell> <paths...> [--stream]`
+- Example: `examples/10_file_upload.ts` (`bun run example:upload`)
+
+### Fixed
+
+- File upload falls back to writing files into `/content` when Colab does not render a browser upload widget (e.g. MCP `run_code_cell` path)
+- Upload cells are started via the Colab UI so MCP stays available for runtime fallback uploads
+
 ## [0.1.1] - 2026-06-10
 
 ### Added
@@ -48,6 +71,7 @@ Initial public release published as [`@syrex1013/colab-sdk`](https://www.npmjs.c
 - 2FA "Tap Yes" flow and post-approval redirect handling
 - `connect({ gpu })` sets connected state before runtime selection
 
-[Unreleased]: https://github.com/syrex1013/ColabSDK/compare/v0.1.1...HEAD
-[0.1.1]: https://github.com/syrex1013/ColabSDK/releases/tag/v0.1.1
+[Unreleased]: https://github.com/syrex1013/ColabSDK/compare/v0.1.3...HEAD
+[0.1.3]: https://github.com/syrex1013/ColabSDK/compare/v0.1.1...v0.1.3
+[0.1.1]: https://github.com/syrex1013/ColabSDK/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/syrex1013/ColabSDK/releases/tag/v0.1.0

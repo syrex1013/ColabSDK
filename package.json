@@ -1,6 +1,6 @@
 {
   "name": "@syrex1013/colab-sdk",
-  "version": "0.1.1",
+  "version": "0.1.3",
   "description": "TypeScript SDK for Google Colab via CloakBrowser and MCP WebSocket proxy",
   "author": "syrex1013",
   "repository": {
@@ -64,6 +64,8 @@
     "example:gpu": "bun run examples/06_select_gpu.ts",
     "example:workflow": "bun run examples/07_notebook_workflow.ts",
     "example:errors": "bun run examples/08_error_handling.ts",
+    "example:workflows": "bun run examples/09_workflow_management.ts",
+    "example:upload": "bun run examples/10_file_upload.ts",
     "test:sdk": "bun run examples/sdk_smoke_test.ts",
     "test:login": "bun run examples/test_login.ts",
     "test:auth": "bun run examples/auth_login.ts",

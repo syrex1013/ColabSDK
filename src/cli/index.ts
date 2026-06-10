@@ -5,7 +5,7 @@ import { readFile } from 'node:fs/promises';
 import { Command } from 'commander';
 
 import { ColabClient } from '../client/ColabClient.js';
-import { ExecutionError } from '../errors/index.js';
+import { ExecutionError, FileUploadError, WorkflowExecutionError } from '../errors/index.js';
 
 let globalClient: ColabClient | null = null;
 let jsonMode = false;
@@ -227,6 +227,175 @@ runtime
       await ensureConnected(client, {});
       await client.runtime.disconnect();
       output({ status: 'runtime_stopped' });
+    } catch (err) {
+      printError(err);
+    }
+  });
+
+const filesCmd = program.command('files').description('Notebook file upload operations');
+
+filesCmd
+  .command('list-upload-cells')
+  .description('List cells that contain file upload widgets')
+  .action(async () => {
+    try {
+      const client = await getClient();
+      await ensureConnected(client, {});
+      output(await client.files.findUploadCells());
+    } catch (err) {
+      printError(err);
+    }
+  });
+
+filesCmd
+  .command('upload <cellRef> <paths...>')
+  .description('Upload local file(s) to a cell with a file upload widget')
+  .option('--stream', 'Emit upload progress events while uploading')
+  .option('--no-run', 'Do not run the cell (widget must already be visible)')
+  .action(async (cellRef: string, paths: string[], opts: { stream?: boolean; run?: boolean }) => {
+    try {
+      const client = await getClient();
+      await ensureConnected(client, {});
+
+      const ref = /^\d+$/.test(cellRef) ? parseInt(cellRef, 10) : cellRef;
+
+      if (opts.stream) {
+        for await (const event of client.files.watchUpload(ref, paths, {
+          runCell: opts.run ?? true,
+        })) {
+          output({ progress: event });
+        }
+        output({ status: 'uploaded', cellRef: ref, files: paths });
+      } else {
+        output(
+          await client.files.upload(ref, paths, {
+            runCell: opts.run ?? true,
+          }),
+        );
+      }
+    } catch (err) {
+      if (err instanceof FileUploadError) {
+        output({ error: err.message, cellId: err.cellId, result: err.result });
+      } else {
+        printError(err);
+      }
+    }
+  });
+
+const workflows = program.command('workflows').description('Workflow operations');
+
+workflows
+  .command('list')
+  .description('List local and uploaded workflows')
+  .option('--source <type>', 'Filter: all, local, uploaded', 'all')
+  .action(async (opts: { source: string }) => {
+    try {
+      const client = await getClient();
+      await ensureConnected(client, {});
+      const source = opts.source as 'all' | 'local' | 'uploaded';
+      output(await client.workflows.list(source));
+    } catch (err) {
+      printError(err);
+    }
+  });
+
+workflows
+  .command('load <id>')
+  .description('Load a workflow into the notebook')
+  .option('--gpu <type>', 'GPU type override')
+  .action(async (id: string, opts: { gpu?: string }) => {
+    try {
+      const client = await getClient();
+      await ensureConnected(client, {});
+      output(
+        await client.workflows.load(id, {
+          gpu: opts.gpu as 't4' | undefined,
+        }),
+      );
+    } catch (err) {
+      printError(err);
+    }
+  });
+
+workflows
+  .command('unload <id>')
+  .description('Unload a workflow from the notebook')
+  .action(async (id: string) => {
+    try {
+      const client = await getClient();
+      await ensureConnected(client, {});
+      await client.workflows.unload(id);
+      output({ status: 'unloaded', workflowId: id });
+    } catch (err) {
+      printError(err);
+    }
+  });
+
+workflows
+  .command('run <id>')
+  .description('Run a workflow')
+  .option('--stream', 'Stream output while running')
+  .option('--no-auto-load', 'Fail if workflow is not already loaded')
+  .action(async (id: string, opts: { stream?: boolean; autoLoad?: boolean }) => {
+    try {
+      const client = await getClient();
+      await ensureConnected(client, {});
+
+      if (opts.stream) {
+        for await (const chunk of client.workflows.runStream(id, {
+          autoLoad: opts.autoLoad ?? true,
+        })) {
+          output({ chunk });
+        }
+        output({ status: 'completed', workflowId: id });
+      } else {
+        output(
+          await client.workflows.run(id, {
+            autoLoad: opts.autoLoad ?? true,
+          }),
+        );
+      }
+    } catch (err) {
+      if (err instanceof WorkflowExecutionError) {
+        output({
+          error: err.message,
+          workflowId: err.workflowId,
+          stepIndex: err.stepIndex,
+          steps: err.steps,
+        });
+      } else {
+        printError(err);
+      }
+    }
+  });
+
+workflows
+  .command('stop')
+  .description('Stop the running workflow')
+  .action(async () => {
+    try {
+      const client = await getClient();
+      await ensureConnected(client, {});
+      await client.workflows.stop();
+      output({ status: 'workflow_stopped' });
+    } catch (err) {
+      printError(err);
+    }
+  });
+
+workflows
+  .command('upload <path>')
+  .description('Register a local workflow file and load it')
+  .option('--no-load', 'Register only, do not load into notebook')
+  .action(async (filePath: string, opts: { load?: boolean }) => {
+    try {
+      const client = await getClient();
+      await ensureConnected(client, {});
+      output(
+        await client.workflows.upload(filePath, {
+          load: opts.load ?? true,
+        }),
+      );
     } catch (err) {
       printError(err);
     }

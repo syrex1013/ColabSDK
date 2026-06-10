@@ -8,6 +8,8 @@ import { KeepAlive } from '../keepalive/KeepAlive.js';
 import { ColabProxy } from '../proxy/ColabProxy.js';
 import { RuntimeManager } from '../runtime/RuntimeManager.js';
 import { ColabDevPaths } from '../storage/ColabDevPaths.js';
+import { FileUploadManager } from '../files/FileUploadManager.js';
+import { WorkflowManager } from '../workflows/WorkflowManager.js';
 import type { ConnectOptions, ConnectionInfo } from '../types/index.js';
 
 export class ColabClient implements AsyncDisposable {
@@ -16,6 +18,8 @@ export class ColabClient implements AsyncDisposable {
   readonly cells: CellManager;
   readonly execute: ExecutionManager;
   readonly runtime: RuntimeManager;
+  readonly workflows: WorkflowManager;
+  readonly files: FileUploadManager;
 
   private readonly proxy = new ColabProxy();
   private readonly browser: BrowserSession;
@@ -29,6 +33,14 @@ export class ColabClient implements AsyncDisposable {
     this.cells = new CellManager(() => this.requireProxy());
     this.execute = new ExecutionManager(() => this.requireProxy(), this.cells, this.browser);
     this.runtime = new RuntimeManager(() => this.requireProxy(), this.browser);
+    this.workflows = new WorkflowManager(
+      this.paths,
+      () => this.requireProxy(),
+      this.cells,
+      this.execute,
+      this.runtime,
+    );
+    this.files = new FileUploadManager(() => this.requireProxy(), this.cells, this.browser);
   }
 
   async connect(options: ConnectOptions = {}): Promise<ConnectionInfo> {
