@@ -33,11 +33,11 @@ Runnable scripts demonstrating the SDK API. Run from the repository root.
 
 ## Using from npm
 
-After installing `@colab/sdk`, copy any example and change the import:
+After installing `@syrex1013/colab-sdk`, copy any example and change the import:
 
 ```typescript
 // In the published package:
-import { ColabClient } from '@colab/sdk';
+import { ColabClient } from '@syrex1013/colab-sdk';
 ```
 
 ## CLI alternative

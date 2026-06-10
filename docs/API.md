@@ -5,9 +5,9 @@ Programmatic TypeScript API for Google Colab automation.
 ## Installation
 
 ```bash
-bun add @colab/sdk
+bun add @syrex1013/colab-sdk
 # or
-npm install @colab/sdk
+npm install @syrex1013/colab-sdk
 ```
 
 ## Quick import
@@ -20,7 +20,7 @@ import {
   ColabSDKError,
   LoginRequiredError,
   // ...other errors
-} from '@colab/sdk';
+} from '@syrex1013/colab-sdk';
 ```
 
 ---

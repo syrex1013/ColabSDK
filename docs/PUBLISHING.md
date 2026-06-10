@@ -28,10 +28,7 @@ The publish workflow reads `secrets.NPM_TOKEN` only at runtime in GitHub Actions
 
 ### 3. npm organization (scoped package)
 
-Package name is `@colab/sdk`. You need publish rights on the `@colab` scope:
-
-- Create an npm organization named `colab`, or
-- Change `name` in `package.json` to a scope you own (e.g. `@syrex1013/colab-sdk`)
+Package name is `@syrex1013/colab-sdk` (scoped to the npm user/org that owns the token).
 
 ## Workflows
 
@@ -125,15 +122,15 @@ Same as above but set `dry_run` to **false**. Prefer using **GitHub Releases** f
 ## Verify after publish
 
 ```bash
-npm view @colab/sdk version
-npm view @colab/sdk
+npm view @syrex1013/colab-sdk version
+npm view @syrex1013/colab-sdk
 ```
 
 Install in a clean project:
 
 ```bash
 bun init -y
-bun add @colab/sdk
+bun add @syrex1013/colab-sdk
 ```
 
 ## Troubleshooting
@@ -150,7 +147,7 @@ bun add @colab/sdk
 
 | Location | URL |
 |----------|-----|
-| npm package | `https://www.npmjs.com/package/@colab/sdk` |
+| npm package | `https://www.npmjs.com/package/@syrex1013/colab-sdk` |
 | README (install + quick start) | GitHub repo homepage |
 | API reference | [docs/API.md](./API.md) (in repo + npm tarball) |
 | Examples | [examples/README.md](../examples/README.md) (repo only) |

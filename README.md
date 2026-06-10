@@ -1,4 +1,4 @@
-# @colab/sdk
+# @syrex1013/colab-sdk
 
 TypeScript SDK for programmatic [Google Colab](https://colab.research.google.com) control via CloakBrowser automation and the Colab MCP WebSocket proxy protocol.
 
@@ -23,9 +23,9 @@ TypeScript SDK for programmatic [Google Colab](https://colab.research.google.com
 ## Install
 
 ```bash
-bun add @colab/sdk
+bun add @syrex1013/colab-sdk
 # or
-npm install @colab/sdk
+npm install @syrex1013/colab-sdk
 ```
 
 From source:
@@ -48,7 +48,7 @@ bunx colab-dev login
 Or from code:
 
 ```typescript
-import { ColabClient } from '@colab/sdk';
+import { ColabClient } from '@syrex1013/colab-sdk';
 
 const client = new ColabClient();
 await client.auth.login();
@@ -59,7 +59,7 @@ Sessions are saved to `.colabdev/browser-profile/`.
 ### 2. Connect headless and run code
 
 ```typescript
-import { ColabClient } from '@colab/sdk';
+import { ColabClient } from '@syrex1013/colab-sdk';
 
 const client = new ColabClient();
 

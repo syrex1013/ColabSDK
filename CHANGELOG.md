@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - 2026-06-10
 
+Published as `@syrex1013/colab-sdk` on npm.
+
 ### Added
 
 - `ColabClient` with `auth`, `cells`, `execute`, and `runtime` managers

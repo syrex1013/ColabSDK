@@ -1,5 +1,5 @@
 {
-  "name": "@colab/sdk",
+  "name": "@syrex1013/colab-sdk",
   "version": "0.1.0",
   "description": "TypeScript SDK for Google Colab via CloakBrowser and MCP WebSocket proxy",
   "author": "syrex1013",
@@ -23,6 +23,7 @@
     "gpu"
   ],
   "files": [
+    "bin",
     "dist",
     "README.md",
     "LICENSE",
@@ -37,7 +38,7 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "bin": {
-    "colab-dev": "./dist/cli/index.js"
+    "colab-dev": "bin/colab-dev.js"
   },
   "exports": {
     ".": {
