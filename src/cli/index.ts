@@ -40,8 +40,9 @@ async function getClient(): Promise<ColabClient> {
 async function ensureConnected(client: ColabClient, opts: { headless?: boolean; gpu?: string }): Promise<void> {
   const status = client.status();
   if (!status.connected) {
+    const globalOpts = program.opts();
     await client.connect({
-      headless: opts.headless ?? true,
+      headless: opts.headless ?? globalOpts.headless ?? true,
       gpu: opts.gpu as 'cpu' | 't4' | 'a100' | undefined,
     });
   }
@@ -53,6 +54,8 @@ program
   .name('colab-dev')
   .description('CLI for Google Colab SDK')
   .option('--json', 'JSON output')
+  .option('--headless', 'Run browser headless', true)
+  .option('--no-headless', 'Show browser window')
   .hook('preAction', (thisCommand) => {
     jsonMode = Boolean(thisCommand.opts().json);
   });
@@ -64,10 +67,12 @@ program
   .action(async (opts: { remoteCdp?: number }) => {
     try {
       const client = await getClient();
+      const globalOpts = program.opts();
       output({ dataDir: client.paths.root, message: 'Opening browser for Google login...' });
       await client.auth.login({
         remoteCdpPort: opts.remoteCdp,
         exportState: true,
+        headless: globalOpts.headless,
       });
       output({ status: 'logged_in', dataDir: client.paths.root });
     } catch (err) {
@@ -78,16 +83,15 @@ program
 program
   .command('connect')
   .description('Connect to Colab')
-  .option('--headless', 'Run browser headless', true)
-  .option('--no-headless', 'Show browser window')
   .option('--gpu <type>', 'GPU type: cpu, t4, a100, l4, tpu')
   .option('--notebook <url>', 'Notebook URL to open')
-  .action(async (opts: { headless: boolean; gpu?: string; notebook?: string }) => {
+  .action(async (opts: { gpu?: string; notebook?: string }) => {
     try {
       const client = await getClient();
+      const globalOpts = program.opts();
       const info = opts.notebook
-        ? await client.openNotebook(opts.notebook, { headless: opts.headless, gpu: opts.gpu as 't4' | undefined })
-        : await client.connect({ headless: opts.headless, gpu: opts.gpu as 't4' | undefined });
+        ? await client.openNotebook(opts.notebook, { headless: globalOpts.headless, gpu: opts.gpu as 't4' | undefined })
+        : await client.connect({ headless: globalOpts.headless, gpu: opts.gpu as 't4' | undefined });
       output({ status: 'connected', ...info, dataDir: client.paths.root });
     } catch (err) {
       printError(err);

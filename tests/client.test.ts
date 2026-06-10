@@ -74,6 +74,16 @@ describe('ColabClient', () => {
     await client.disconnect();
   });
 
+  it('defaults to headless mode when no options provided', async () => {
+    const client = new ColabClient(tempDir);
+    await client.connect();
+    expect(mockBrowser.connect).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ headless: true }),
+    );
+    await client.disconnect();
+  });
+
   it('selects GPU on connect when requested', async () => {
     const client = new ColabClient(tempDir);
     await client.connect({ headless: true, gpu: 't4' });

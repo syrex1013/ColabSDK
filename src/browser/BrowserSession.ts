@@ -341,10 +341,14 @@ export class BrowserSession {
       }
       await page.waitForTimeout(400);
 
+      // T4 and some other runtimes show a confirmation modal immediately after click
+      await this.acceptRuntimeChangeConfirmation().catch(() => undefined);
+
       // Verify the radio actually became checked before saving; retry once
       if (!(await readChecked())) {
         result = await clickRadio();
         await page.waitForTimeout(400);
+        await this.acceptRuntimeChangeConfirmation().catch(() => undefined);
         if (!(await readChecked())) {
           throw new BrowserError(`${displayName} radio did not become checked after clicking`);
         }
@@ -392,23 +396,25 @@ export class BrowserSession {
   private async acceptRuntimeChangeConfirmation(): Promise<void> {
     const page = this.requirePage();
     const promptText =
-      /Changing runtime attributes may terminate your current session\.\s*Are you sure you want to continue\?|Disconnect and delete runtime/i;
+      /Changing runtime attributes may terminate your current session\.\s*Are you sure you want to continue\?|Disconnect and delete runtime|switch to a T4 runtime|additional compute units/i;
     const dialog = page
-      .locator('mwc-dialog.yes-no-dialog[open], colab-dialog.yes-no-dialog, [role="alertdialog"].mdc-dialog--open')
+      .locator(
+        'mwc-dialog.yes-no-dialog[open], mwc-dialog.dismiss-runtime-warning[open], colab-dialog.yes-no-dialog, [role="alertdialog"].mdc-dialog--open',
+      )
       .filter({ hasText: promptText })
       .first();
 
     // Poll for the confirm dialog with evaluate — waitForFunction is blocked
     // by Colab's CSP (no unsafe-eval in the main world).
     {
-      const deadline = Date.now() + 3_000;
+      const deadline = Date.now() + 5_000;
       while (Date.now() < deadline) {
         const present = await page
           .evaluate((source) => {
             const prompt = new RegExp(source, 'i');
             return Array.from(
               document.querySelectorAll<HTMLElement>(
-                'mwc-dialog.yes-no-dialog[open], colab-dialog.yes-no-dialog, [role="alertdialog"].mdc-dialog--open',
+                'mwc-dialog.yes-no-dialog[open], mwc-dialog.dismiss-runtime-warning[open], colab-dialog.yes-no-dialog, [role="alertdialog"].mdc-dialog--open',
               ),
             ).some((el) => prompt.test(`${el.getAttribute('aria-label') ?? ''}\n${el.innerText}`));
           }, promptText.source)
@@ -422,7 +428,7 @@ export class BrowserSession {
       const prompt = new RegExp(source, 'i');
       const dialogs = Array.from(
         document.querySelectorAll<HTMLElement>(
-          'mwc-dialog.yes-no-dialog[open], colab-dialog.yes-no-dialog, [role="alertdialog"].mdc-dialog--open',
+          'mwc-dialog.yes-no-dialog[open], mwc-dialog.dismiss-runtime-warning[open], colab-dialog.yes-no-dialog, [role="alertdialog"].mdc-dialog--open',
         ),
       );
       const target = dialogs.find((el) => prompt.test(`${el.getAttribute('aria-label') ?? ''}\n${el.innerText}`));
@@ -434,7 +440,7 @@ export class BrowserSession {
       );
       const ok = candidates.find((el) => {
         const text = (el.innerText || el.textContent || '').trim().toLowerCase();
-        return el.getAttribute('dialogaction') === 'ok' || text === 'ok';
+        return el.getAttribute('dialogaction') === 'ok' || text === 'ok' || el.getAttribute('slot') === 'primaryAction';
       });
       ok?.click();
       return Boolean(ok);
