@@ -1,8 +1,8 @@
 name: Publish to npm
 
+# Manual dispatch only — use local `npm publish` + `gh release create` when
+# GitHub Actions billing is unavailable. Re-enable `release:` trigger when fixed.
 on:
-  release:
-    types: [published]
   workflow_dispatch:
     inputs:
       dry_run:
@@ -61,7 +61,7 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Publish to npm
-        if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.dry_run == 'false')
+        if: github.event_name == 'workflow_dispatch' && inputs.dry_run == 'false'
         run: npm publish --access public --provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

@@ -7,13 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-06-10
+
 ### Added
 
-- (nothing yet)
+- Professional documentation restyle (README, API reference, publishing guide, examples index, docs hub)
+- `docs/README.md` documentation index
+
+### Changed
+
+- npm publish workflow switched to manual dispatch only (bypass GitHub Actions billing lock)
+- CLI bin entry uses `bin/colab-dev.js` wrapper
 
 ## [0.1.0] - 2026-06-10
 
-Published as `@syrex1013/colab-sdk` on npm.
+Initial public release published as [`@syrex1013/colab-sdk`](https://www.npmjs.com/package/@syrex1013/colab-sdk) on npm.
 
 ### Added
 
@@ -29,6 +37,7 @@ Published as `@syrex1013/colab-sdk` on npm.
 - Example scripts (`examples/01`–`08`)
 - API reference (`docs/API.md`)
 - Unit test suite with >90% line coverage on core modules
+- GitHub Actions CI and npm publish workflows
 
 ### Fixed
 
@@ -39,5 +48,6 @@ Published as `@syrex1013/colab-sdk` on npm.
 - 2FA "Tap Yes" flow and post-approval redirect handling
 - `connect({ gpu })` sets connected state before runtime selection
 
-[Unreleased]: https://github.com/syrex1013/ColabSDK/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/syrex1013/ColabSDK/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/syrex1013/ColabSDK/releases/tag/v0.1.1
 [0.1.0]: https://github.com/syrex1013/ColabSDK/releases/tag/v0.1.0

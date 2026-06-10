@@ -1,34 +1,63 @@
-# @syrex1013/colab-sdk
+<p align="center">
+  <strong>@syrex1013/colab-sdk</strong><br>
+  TypeScript SDK for programmatic Google Colab automation
+</p>
 
-TypeScript SDK for programmatic [Google Colab](https://colab.research.google.com) control via CloakBrowser automation and the Colab MCP WebSocket proxy protocol.
+<p align="center">
+  <a href="https://www.npmjs.com/package/@syrex1013/colab-sdk"><img src="https://img.shields.io/npm/v/@syrex1013/colab-sdk.svg" alt="npm version"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="MIT License"></a>
+  <a href="https://github.com/syrex1013/ColabSDK"><img src="https://img.shields.io/github/stars/syrex1013/ColabSDK?style=social" alt="GitHub stars"></a>
+</p>
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+---
+
+Control [Google Colab](https://colab.research.google.com) notebooks from TypeScript or Node.js — create cells, execute Python, select GPU runtimes, and manage sessions headlessly. Built on CloakBrowser automation and Colab's MCP WebSocket proxy.
+
+> **Disclaimer:** Unofficial project. Not affiliated with Google. Use responsibly and in accordance with Google's terms of service.
+
+## Table of contents
+
+- [Features](#features)
+- [Requirements](#requirements)
+- [Installation](#installation)
+- [Quick start](#quick-start)
+- [CLI reference](#cli-reference)
+- [Documentation](#documentation)
+- [Examples](#examples)
+- [Configuration](#configuration)
+- [Architecture](#architecture)
+- [Development](#development)
+- [Publishing](#publishing)
+- [License](#license)
 
 ## Features
 
-- Create, edit, remove, and move notebook cells
-- Execute code and cells, interrupt execution, stream outputs
-- Runtime GPU selection (T4, A100, L4, CPU, TPU)
-- Google login with 2FA support and persistent browser sessions
-- Keep-alive to reduce idle disconnects in headless mode
-- Typed error hierarchy
-- Optional `colab-dev` CLI
-- Persistent state in `.colabdev/`
+| Category | Capabilities |
+|----------|--------------|
+| **Notebook** | Create, edit, list, move, and remove code and markdown cells |
+| **Execution** | Run cells or arbitrary code, interrupt runs, stream output |
+| **Runtime** | Select GPU type (T4, A100, L4, CPU, TPU) and check health |
+| **Authentication** | Google login with 2FA, persistent browser sessions |
+| **Reliability** | Keep-alive for headless sessions, typed error hierarchy |
+| **Tooling** | `colab-dev` CLI, `.colabdev/` state directory |
 
-## Prerequisites
+## Requirements
 
-- [Bun](https://bun.sh) (recommended) or Node.js 20+
-- Google account with Colab access
+- **Runtime:** [Bun](https://bun.sh) (recommended) or Node.js 20+
+- **Account:** Google account with Colab access
 
-## Install
+## Installation
 
 ```bash
 bun add @syrex1013/colab-sdk
-# or
+```
+
+```bash
 npm install @syrex1013/colab-sdk
 ```
 
-From source:
+<details>
+<summary><strong>Install from source</strong></summary>
 
 ```bash
 git clone https://github.com/syrex1013/ColabSDK.git
@@ -37,9 +66,13 @@ bun install
 bun run build
 ```
 
+</details>
+
 ## Quick start
 
-### 1. Login (once, supports 2FA)
+### Step 1 — Authenticate (once)
+
+Log in interactively. Two-factor authentication is supported in a visible browser window.
 
 ```bash
 bunx colab-dev login
@@ -51,12 +84,12 @@ Or from code:
 import { ColabClient } from '@syrex1013/colab-sdk';
 
 const client = new ColabClient();
-await client.auth.login();
+await client.auth.login({ exportState: true });
 ```
 
-Sessions are saved to `.colabdev/browser-profile/`.
+Sessions persist in `.colabdev/browser-profile/` for subsequent headless runs.
 
-### 2. Connect headless and run code
+### Step 2 — Connect and run code
 
 ```typescript
 import { ColabClient } from '@syrex1013/colab-sdk';
@@ -76,54 +109,94 @@ try {
 }
 ```
 
-### 3. CLI
+## CLI reference
 
-```bash
-bunx colab-dev connect --headless --gpu t4
-bunx colab-dev exec "print('hello')"
-bunx colab-dev exec "for i in range(5): print(i)" --stream
-bunx colab-dev cells list
-bunx colab-dev cells add "print(1)" --index 0
-bunx colab-dev runtime gpu a100
-bunx colab-dev status --health
-bunx colab-dev stop
-```
+| Command | Description |
+|---------|-------------|
+| `colab-dev login` | Interactive Google sign-in |
+| `colab-dev connect --headless --gpu t4` | Open a headless Colab session |
+| `colab-dev exec "print('hello')"` | Execute Python code |
+| `colab-dev exec "..." --stream` | Execute with streamed output |
+| `colab-dev cells list` | List notebook cells |
+| `colab-dev cells add "print(1)" --index 0` | Insert a code cell |
+| `colab-dev runtime gpu a100` | Change GPU runtime |
+| `colab-dev status --health` | Connection and runtime status |
+| `colab-dev stop` | Disconnect and clean up |
 
-## API documentation
+## Documentation
 
-Full API reference: [docs/API.md](docs/API.md)
-
-## `.colabdev/` directory
-
-| Path | Purpose |
-|------|---------|
-| `.colabdev/browser-profile/` | Google session cookies |
-| `.colabdev/settings.json` | SDK preferences |
-| `.colabdev/session.json` | Active connection metadata |
-| `.colabdev/debug/` | Screenshots on failures |
-
-Override location with `COLABDEV_DIR`.
-
-## Login modes
-
-| Mode | Usage |
-|------|-------|
-| Interactive (default) | `colab-dev login` — complete password + 2FA in visible browser |
-| Headless reuse | `connect({ headless: true })` after login |
-| Remote CDP | `colab-dev login --remote-cdp 9222` — complete 2FA via DevTools over SSH tunnel |
+| Resource | Link |
+|----------|------|
+| API reference | [docs/API.md](docs/API.md) |
+| Example scripts | [examples/README.md](examples/README.md) |
+| Publishing guide | [docs/PUBLISHING.md](docs/PUBLISHING.md) |
+| Changelog | [CHANGELOG.md](CHANGELOG.md) |
+| Docs index | [docs/README.md](docs/README.md) |
 
 ## Examples
 
-See [`examples/README.md`](examples/README.md) for the full list.
+Runnable examples live in [`examples/`](examples/). From the repository root:
 
-| Script | Command | Description |
-|--------|---------|-------------|
-| Login | `bun run example:login` | Interactive Google login (2FA) |
+| Example | Command | Description |
+|---------|---------|-------------|
+| Login | `bun run example:login` | Interactive Google login |
 | Run code | `bun run example:run` | Connect and execute Python |
-| Cells | `bun run example:cells` | Create, edit, move, delete cells |
-| GPU | `bun run example:gpu` | Select GPU runtime |
-| Workflow | `bun run example:workflow` | Full notebook automation |
-| Smoke test | `bun run test:sdk` | Full API integration test |
+| Cells | `bun run example:cells` | Cell CRUD operations |
+| Stream | `bun run example:stream` | Streamed cell output |
+| GPU | `bun run example:gpu` | GPU runtime selection |
+| Workflow | `bun run example:workflow` | End-to-end notebook flow |
+| Errors | `bun run example:errors` | Typed error handling |
+| Smoke test | `bun run test:sdk` | Full integration test |
+
+## Configuration
+
+### Data directory (`.colabdev/`)
+
+| Path | Purpose |
+|------|---------|
+| `browser-profile/` | Persisted Google session cookies |
+| `settings.json` | SDK preferences |
+| `session.json` | Active connection metadata |
+| `debug/` | Debug screenshots on failure |
+
+Set `COLABDEV_DIR` to override the default location (`./.colabdev`).
+
+### Authentication modes
+
+| Mode | How to use |
+|------|------------|
+| Interactive | `colab-dev login` or `client.auth.login()` |
+| Headless reuse | `connect({ headless: true })` after a saved session exists |
+| Remote CDP | `colab-dev login --remote-cdp 9222` for 2FA over SSH tunnel |
+
+### Error handling
+
+All errors extend `ColabSDKError` with a machine-readable `code` field. Common types:
+
+`LoginRequiredError` · `TwoFactorPendingError` · `NotConnectedError` · `ConnectionTimeoutError` · `RpcError` · `ExecutionError` · `CellNotFoundError` · `BrowserError`
+
+See the [error reference](docs/API.md#error-classes) for the full list.
+
+## Architecture
+
+```
+┌─────────────┐     WebSocket MCP      ┌──────────────────┐
+│  ColabClient │ ◄──────────────────► │  Colab frontend  │
+│  (your code) │                       │  (notebook UI)   │
+└──────┬──────┘                       └────────▲─────────┘
+       │                                         │
+       │ localhost proxy                         │ CloakBrowser
+       ▼                                         │
+┌─────────────┐     browser automation   ┌──────┴─────────┐
+│  ColabProxy  │ ◄────────────────────── │ BrowserSession │
+└─────────────┘                          └────────────────┘
+```
+
+1. The SDK starts a local MCP WebSocket proxy.
+2. CloakBrowser opens Colab with an authenticated proxy URL.
+3. The Colab frontend connects and exposes notebook tools.
+4. The SDK invokes tools for cell management and execution.
+5. A keep-alive script reduces idle disconnects in headless mode.
 
 ## Development
 
@@ -131,63 +204,29 @@ See [`examples/README.md`](examples/README.md) for the full list.
 bun install
 bun run build
 bun test                 # unit tests
-bun run test:coverage    # unit tests + >90% line coverage
+bun run test:coverage    # coverage gate (>90% lines on core modules)
 bun run test:sdk         # live Colab smoke test
 ```
 
-### Coverage notes
-
-Unit tests target **>90% line coverage** on core SDK modules (`ColabClient`, managers, proxy, paths, errors). Browser automation (`src/browser/`) is validated via live smoke tests (`test:sdk`) because it requires a real Colab session.
-
-## Error handling
-
-All SDK errors extend `ColabSDKError` with a `code` field:
-
-- `LoginRequiredError`
-- `TwoFactorPendingError`
-- `NotConnectedError`
-- `ConnectionTimeoutError`
-- `RpcError`
-- `ExecutionError`
-- `CellNotFoundError`
-- `BrowserError`
-
-See [docs/API.md](docs/API.md#error-classes) for details.
-
-## How it works
-
-1. SDK starts a localhost MCP WebSocket proxy
-2. CloakBrowser opens Colab with proxy token URL
-3. Colab frontend connects and exposes notebook tools
-4. SDK calls tools for cell CRUD and execution
-5. Keep-alive JS prevents idle timeout in headless mode
+Browser automation (`src/browser/`) is covered by integration smoke tests rather than unit tests, because it requires a real Colab session.
 
 ## Publishing
 
-Automated via GitHub Actions when you [publish a GitHub Release](https://github.com/syrex1013/ColabSDK/releases).
-
-**Setup (once):** add an npm token as the GitHub secret `NPM_TOKEN`.  
-**Full guide:** [docs/PUBLISHING.md](docs/PUBLISHING.md)
+Releases are automated via GitHub Actions when a [GitHub Release](https://github.com/syrex1013/ColabSDK/releases) is published.
 
 ```bash
 # 1. Update CHANGELOG.md
-npm version patch          # bumps package.json + creates tag
+npm version patch
 git push origin main --follow-tags
 
-# 2. Create GitHub Release from the tag → CI publishes to npm
+# 2. Publish release (triggers npm publish workflow)
 gh release create v0.1.1 --title "v0.1.1" --generate-notes
 ```
 
-CI runs `typecheck`, `test:coverage` (>90% lines), and `build` before every publish.
-
-## Disclaimer
-
-Unofficial project — not affiliated with Google. Uses Colab's frontend MCP bridge. Use responsibly and in accordance with Google's terms of service.
+See [docs/PUBLISHING.md](docs/PUBLISHING.md) for CI setup, secrets, and troubleshooting.
 
 ## License
 
 [MIT](LICENSE) © [syrex1013](https://github.com/syrex1013)
 
-## Support
-
-If this project helps you, consider [sponsoring](https://github.com/sponsors/syrex1013).
+If this project is useful to you, consider [sponsoring development](https://github.com/sponsors/syrex1013).

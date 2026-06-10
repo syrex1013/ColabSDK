@@ -1,6 +1,6 @@
 {
   "name": "@syrex1013/colab-sdk",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "TypeScript SDK for Google Colab via CloakBrowser and MCP WebSocket proxy",
   "author": "syrex1013",
   "repository": {
@@ -29,7 +29,8 @@
     "LICENSE",
     "CHANGELOG.md",
     "docs/API.md",
-    "docs/PUBLISHING.md"
+    "docs/PUBLISHING.md",
+    "docs/README.md"
   ],
   "publishConfig": {
     "access": "public"
