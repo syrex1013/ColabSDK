@@ -220,7 +220,7 @@ export class FileUploadManager {
       method: 'widget',
     });
 
-    const cellResult = await this.waitForCellExecution(cell.cellId, uploadTimeoutMs);
+    const cellResult = await this.waitForCellExecution(cell.cellId, uploadTimeoutMs, cell.cellIndex);
     if (cellResult?.isError) {
       throw new FileUploadError(
         cellResult.stderr || cellResult.stdout || 'Cell failed after file upload',
@@ -318,30 +318,44 @@ export class FileUploadManager {
   private async waitForCellExecution(
     cellId: string,
     timeoutMs: number,
+    cellIndex?: number,
   ): Promise<CellResult | undefined> {
     const start = Date.now();
 
     while (Date.now() - start < timeoutMs) {
-      const cells = await this.cells.list();
-      const cell = cells.find((entry) => entry.cellId === cellId);
-      const outputs = cell?.outputs ?? [];
-      if (!outputs.length) {
-        await new Promise((r) => setTimeout(r, STREAM_POLL_INTERVAL_MS));
-        continue;
+      // Primary: notebook model outputs via MCP (may lag or fail while the
+      // upload widget holds the kernel; tolerate errors and keep polling)
+      const cells = await this.cells.list().catch(() => null);
+      if (cells) {
+        const cell = cells.find((entry) => entry.cellId === cellId);
+        const outputs = cell?.outputs ?? [];
+        if (outputs.length) {
+          const parsed = parseCellResult({ structuredContent: { outputs } });
+          const finished = outputs.some((output) => {
+            const typed = output as { output_type?: string };
+            return (
+              typed.output_type === 'stream' ||
+              typed.output_type === 'execute_result' ||
+              typed.output_type === 'error'
+            );
+          });
+
+          if (finished) {
+            return { ...parsed, cellId };
+          }
+        }
       }
 
-      const parsed = parseCellResult({ structuredContent: { outputs } });
-      const finished = outputs.some((output) => {
-        const typed = output as { output_type?: string };
-        return (
-          typed.output_type === 'stream' ||
-          typed.output_type === 'execute_result' ||
-          typed.output_type === 'error'
-        );
-      });
-
-      if (finished) {
-        return { ...parsed, cellId };
+      // Fallback: the cell output renders in a sandboxed output iframe that the
+      // notebook model may not reflect promptly. If the DOM shows the upload
+      // cell printed its result (e.g. `uploaded: [...]`), treat it as finished.
+      if (cellIndex !== undefined) {
+        const domState = await this.browser
+          .readCellUploadState(cellId, cellIndex)
+          .catch(() => null);
+        if (domState?.complete) {
+          return undefined;
+        }
       }
 
       await new Promise((r) => setTimeout(r, STREAM_POLL_INTERVAL_MS));

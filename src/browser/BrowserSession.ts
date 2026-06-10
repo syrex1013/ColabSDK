@@ -5,6 +5,7 @@ import { launchPersistentContext } from 'cloakbrowser';
 import type { BrowserContext, Page } from 'playwright-core';
 
 import {
+  ACCELERATOR_VALUES,
   COLAB_URL,
   GPU_TYPES,
   MCP_ACCEPT_BUTTON_TEXT,
@@ -264,22 +265,240 @@ export class BrowserSession {
     }
 
     try {
-      await page.getByText('Runtime', { exact: true }).first().click();
-      await page.getByText('Change runtime type').waitFor({
-        timeout: RUNTIME_DIALOG_TIMEOUT_MS,
-        state: 'visible',
+      // Open Runtime menu via the known button id
+      await page.locator('#runtime-menu-button').click({ timeout: RUNTIME_DIALOG_TIMEOUT_MS });
+      // Wait for menu item to appear (it has command="change-runtime-type" in light DOM)
+      await page.locator('[command="change-runtime-type"]').waitFor({ state: 'visible', timeout: RUNTIME_DIALOG_TIMEOUT_MS });
+      await page.locator('[command="change-runtime-type"]').click();
+
+      // mwc-dialog uses shadow DOM — Playwright's visibility check fails on it,
+      // and waitForFunction is blocked by Colab's CSP. Poll with evaluate instead.
+      {
+        const dialogDeadline = Date.now() + RUNTIME_DIALOG_TIMEOUT_MS;
+        let dialogOpen = false;
+        while (Date.now() < dialogDeadline) {
+          dialogOpen = await page.evaluate(() => {
+            const d = document.querySelector('mwc-dialog.change-runtime-type');
+            return Boolean(d?.hasAttribute('open') && !d.classList.contains('colab-dialog-opening'));
+          });
+          if (dialogOpen) break;
+          await page.waitForTimeout(300);
+        }
+        if (!dialogOpen) {
+          throw new BrowserError('Change runtime type dialog did not open');
+        }
+      }
+      await page.waitForTimeout(500);
+
+      // Verified DOM structure (2026-06): colab-runtime-attributes-selector's
+      // shadow root contains light-DOM children:
+      //   <mwc-formfield label="T4 GPU"><mwc-radio name="accelerator" value="GPU,T4"/></mwc-formfield>
+      // Click the radio by its `value` attribute; fall back to formfield label.
+      const acceleratorValue = ACCELERATOR_VALUES[gpu];
+      const clickRadio = () =>
+        page.evaluate(
+          ({ value, label }) => {
+            const sel = document.querySelector('colab-runtime-attributes-selector') as any;
+            const root: ShadowRoot | Document = sel?.shadowRoot ?? document;
+            // Primary: exact value attribute match on mwc-radio
+            let radio = root.querySelector<HTMLElement>(
+              `mwc-radio[name="accelerator"][value="${value}"]`,
+            );
+            // Fallback: formfield label match (e.g. label="T4 GPU")
+            if (!radio) {
+              for (const ff of Array.from(root.querySelectorAll<HTMLElement>('mwc-formfield'))) {
+                if ((ff.getAttribute('label') ?? '').toLowerCase() === label.toLowerCase()) {
+                  radio = ff.querySelector<HTMLElement>('mwc-radio');
+                  break;
+                }
+              }
+            }
+            if (!radio) return { clicked: false, reason: 'radio not found' };
+            if (radio.hasAttribute('disabled')) return { clicked: false, reason: 'radio disabled' };
+            radio.click();
+            return { clicked: true, reason: '' };
+          },
+          { value: acceleratorValue, label: displayName },
+        );
+
+      const readChecked = () =>
+        page.evaluate((value) => {
+          const sel = document.querySelector('colab-runtime-attributes-selector') as any;
+          const root: ShadowRoot | Document = sel?.shadowRoot ?? document;
+          const radio = root.querySelector<HTMLElement>(
+            `mwc-radio[name="accelerator"][value="${value}"]`,
+          ) as any;
+          if (!radio) return false;
+          // mwc-radio exposes `checked` as a property; its shadow input mirrors it
+          if (radio.checked === true || radio.hasAttribute('checked')) return true;
+          const input = radio.shadowRoot?.querySelector('input[type="radio"]') as HTMLInputElement | null;
+          return Boolean(input?.checked);
+        }, acceleratorValue);
+
+      let result = await clickRadio();
+      if (!result.clicked) {
+        throw new BrowserError(`Could not select ${displayName} radio: ${result.reason}`);
+      }
+      await page.waitForTimeout(400);
+
+      // Verify the radio actually became checked before saving; retry once
+      if (!(await readChecked())) {
+        result = await clickRadio();
+        await page.waitForTimeout(400);
+        if (!(await readChecked())) {
+          throw new BrowserError(`${displayName} radio did not become checked after clicking`);
+        }
+      }
+
+      // Click Save — scope to the change-runtime-type dialog
+      const saved = await page.evaluate(() => {
+        const dialog = document.querySelector('mwc-dialog.change-runtime-type');
+        const btn = dialog?.querySelector<HTMLElement>(
+          'md-text-button[dialogaction="ok"], [slot="primaryAction"]',
+        );
+        if (btn) { btn.click(); return true; }
+        return false;
       });
-      await page.getByText('Change runtime type').click();
-      await page.getByRole('radio', { name: displayName }).waitFor({
-        timeout: RUNTIME_DIALOG_TIMEOUT_MS,
-        state: 'visible',
-      });
-      await page.getByRole('radio', { name: displayName }).click();
-      await page.getByRole('button', { name: 'Save' }).click();
+      if (!saved) {
+        await page.getByRole('button', { name: /^Save$/i }).click({ timeout: RUNTIME_DIALOG_TIMEOUT_MS });
+      }
+
+      // "Changing runtime attributes may terminate your current session" confirm
+      await this.acceptRuntimeChangeConfirmation();
+
+      // Confirm the dialog actually closed (i.e. Save was accepted)
+      {
+        const closeDeadline = Date.now() + RUNTIME_DIALOG_TIMEOUT_MS;
+        let closed = false;
+        while (Date.now() < closeDeadline) {
+          closed = await page.evaluate(
+            () => !document.querySelector('mwc-dialog.change-runtime-type')?.hasAttribute('open'),
+          );
+          if (closed) break;
+          // The confirm dialog may still be pending — try accepting again
+          await this.acceptRuntimeChangeConfirmation().catch(() => undefined);
+          await page.waitForTimeout(500);
+        }
+        if (!closed) {
+          throw new BrowserError('Change runtime type dialog did not close after Save');
+        }
+      }
     } catch (err) {
       await this.saveDebugScreenshot('runtime-change-failure');
       throw new BrowserError(`Failed to change runtime to ${gpu}`, err);
     }
+  }
+
+  private async acceptRuntimeChangeConfirmation(): Promise<void> {
+    const page = this.requirePage();
+    const promptText =
+      /Changing runtime attributes may terminate your current session\.\s*Are you sure you want to continue\?|Disconnect and delete runtime/i;
+    const dialog = page
+      .locator('mwc-dialog.yes-no-dialog[open], colab-dialog.yes-no-dialog, [role="alertdialog"].mdc-dialog--open')
+      .filter({ hasText: promptText })
+      .first();
+
+    // Poll for the confirm dialog with evaluate — waitForFunction is blocked
+    // by Colab's CSP (no unsafe-eval in the main world).
+    {
+      const deadline = Date.now() + 3_000;
+      while (Date.now() < deadline) {
+        const present = await page
+          .evaluate((source) => {
+            const prompt = new RegExp(source, 'i');
+            return Array.from(
+              document.querySelectorAll<HTMLElement>(
+                'mwc-dialog.yes-no-dialog[open], colab-dialog.yes-no-dialog, [role="alertdialog"].mdc-dialog--open',
+              ),
+            ).some((el) => prompt.test(`${el.getAttribute('aria-label') ?? ''}\n${el.innerText}`));
+          }, promptText.source)
+          .catch(() => false);
+        if (present) break;
+        await page.waitForTimeout(250);
+      }
+    }
+    const dialogVisible = await dialog.isVisible().catch(() => false);
+    const clickedByDom = await page.evaluate((source) => {
+      const prompt = new RegExp(source, 'i');
+      const dialogs = Array.from(
+        document.querySelectorAll<HTMLElement>(
+          'mwc-dialog.yes-no-dialog[open], colab-dialog.yes-no-dialog, [role="alertdialog"].mdc-dialog--open',
+        ),
+      );
+      const target = dialogs.find((el) => prompt.test(`${el.getAttribute('aria-label') ?? ''}\n${el.innerText}`));
+      const root = target?.closest('mwc-dialog, colab-dialog') ?? target;
+      const candidates = Array.from(
+        root?.querySelectorAll<HTMLElement>(
+          'md-text-button[slot="primaryAction"], [slot="primaryAction"], [dialogaction="ok"], button, paper-button, [role="button"]',
+        ) ?? [],
+      );
+      const ok = candidates.find((el) => {
+        const text = (el.innerText || el.textContent || '').trim().toLowerCase();
+        return el.getAttribute('dialogaction') === 'ok' || text === 'ok';
+      });
+      ok?.click();
+      return Boolean(ok);
+    }, promptText.source);
+
+    if (clickedByDom) {
+      return;
+    }
+
+    if (!dialogVisible) {
+      return;
+    }
+
+    const okButton = dialog.getByRole('button', { name: /^OK$/i }).first();
+    if (await okButton.isVisible().catch(() => false)) {
+      await okButton.click();
+      return;
+    }
+
+    const clicked = await dialog.evaluate((root) => {
+      const candidates = Array.from(
+        root.querySelectorAll<HTMLElement>(
+          'button, md-text-button, paper-button, [role="button"], [dialogaction="ok"], [slot="primaryAction"]',
+        ),
+      );
+      const ok = candidates.find((el) => (el.innerText || el.textContent || '').trim().toLowerCase() === 'ok');
+      ok?.click();
+      return Boolean(ok);
+    });
+
+    if (!clicked) {
+      throw new BrowserError('Runtime change confirmation appeared, but no OK button was found');
+    }
+  }
+
+  private async clickRuntimeMenuItem(command: string): Promise<boolean> {
+    const page = this.requirePage();
+    // Poll with evaluate — waitForFunction is blocked by Colab's CSP
+    const deadline = Date.now() + RUNTIME_DIALOG_TIMEOUT_MS;
+    while (Date.now() < deadline) {
+      const ready = await page
+        .evaluate((cmd) => {
+          const item = document.querySelector<HTMLElement>(`.goog-menuitem[command="${cmd}"]`);
+          if (!item) return false;
+          const itemStyle = window.getComputedStyle(item);
+          if (itemStyle.display === 'none' || itemStyle.visibility === 'hidden') return false;
+          const menu = item.closest<HTMLElement>('.goog-menu');
+          if (menu) {
+            const menuStyle = window.getComputedStyle(menu);
+            if (menuStyle.display === 'none' || menuStyle.visibility === 'hidden') return false;
+          }
+          return true;
+        }, command)
+        .catch(() => false);
+      if (ready) break;
+      await page.waitForTimeout(250);
+    }
+
+    return page.evaluate((cmd) => {
+      const item = document.querySelector<HTMLElement>(`.goog-menuitem[command="${cmd}"]`);
+      if (!item) return false;
+      item.click();
+      return true;
+    }, command);
   }
 
   async interruptExecution(): Promise<void> {
@@ -306,32 +525,72 @@ export class BrowserSession {
         ({ id, index }) => {
           const findCell = (): Element | null => {
             const escaped = CSS.escape(id);
-            const byAttr = document.querySelector(`[data-cell-id="${id}"], #${escaped}`);
-            if (byAttr) return byAttr;
-            const cells = document.querySelectorAll('colab-cell, .cell');
+            const selectors = [
+              `[data-cell-id="${id}"]`,
+              `#${escaped}`,
+              `#cell-${escaped}`,
+              'div.cell[role="region"][aria-label^="Cell"]',
+              'div.cell.notebook-cell',
+              'colab-cell',
+              '.cell',
+            ];
+            for (const selector of selectors) {
+              const el = document.querySelector(selector);
+              if (el) return el;
+            }
+            const cells = document.querySelectorAll('colab-cell, div.cell, .cell');
             return cells.item(index) ?? null;
           };
 
           const tryClickRun = (root: Element | Document | ShadowRoot): boolean => {
-            const selectors = [
+            // 1. Try to find the actual button element first, especially in shadow roots
+            const buttons = Array.from(root.querySelectorAll('button'));
+            for (const btn of buttons) {
+              const label = (btn.getAttribute('aria-label') || '').toLowerCase();
+              const title = (btn.getAttribute('title') || '').toLowerCase();
+              const id = btn.id.toLowerCase();
+              if (
+                id === 'run-button' ||
+                label.includes('run cell') ||
+                label.includes('play') ||
+                title.includes('run')
+              ) {
+                btn.click();
+                return true;
+              }
+            }
+
+            // 2. Try specific custom elements that might have shadow roots we should explore
+            const containers = Array.from(root.querySelectorAll('colab-run-button, .cell-execution-container'));
+            for (const container of containers) {
+              if (container.shadowRoot && tryClickRun(container.shadowRoot)) {
+                return true;
+              }
+            }
+
+            // 3. General recursion for any other shadow roots
+            const all = Array.from(root.querySelectorAll('*'));
+            for (const el of all) {
+              if (el.shadowRoot && !containers.includes(el as any)) {
+                if (tryClickRun(el.shadowRoot)) return true;
+              }
+            }
+
+            // 4. Fallback to older selectors if still not found
+            const legacySelectors = [
               'colab-run-button',
               '[aria-label*="Run cell" i]',
               '[aria-label*="Play" i]',
               'button[title*="Run" i]',
             ];
-            for (const selector of selectors) {
-              const button = root.querySelector(selector);
-              if (button instanceof HTMLElement) {
-                button.click();
+            for (const selector of legacySelectors) {
+              const el = root.querySelector(selector);
+              if (el instanceof HTMLElement) {
+                el.click();
                 return true;
               }
             }
-            if ('querySelectorAll' in root) {
-              const elements = Array.from(root.querySelectorAll('*'));
-              for (const el of elements) {
-                if (el.shadowRoot && tryClickRun(el.shadowRoot)) return true;
-              }
-            }
+
             return false;
           };
 
@@ -385,45 +644,15 @@ export class BrowserSession {
   }
 
   async setCellUploadFiles(cellId: string, cellIndex: number, files: string[]): Promise<void> {
-    const page = this.requirePage();
+    this.requirePage();
     try {
-      const handle = await page.evaluateHandle(
-        ({ id, index }) => {
-          const findCell = (): Element | null => {
-            const escaped = CSS.escape(id);
-            const byAttr = document.querySelector(`[data-cell-id="${id}"], #${escaped}`);
-            if (byAttr) return byAttr;
-            const cells = document.querySelectorAll('colab-cell, .cell');
-            return cells.item(index) ?? null;
-          };
-
-          const collectInputs = (root: Element | Document | ShadowRoot): HTMLInputElement[] => {
-            const inputs: HTMLInputElement[] = [];
-            root.querySelectorAll('input[type="file"]').forEach((el) => {
-              if (el instanceof HTMLInputElement) inputs.push(el);
-            });
-            root.querySelectorAll('*').forEach((el) => {
-              if (el.shadowRoot) inputs.push(...collectInputs(el.shadowRoot));
-            });
-            return inputs;
-          };
-
-          const cell = findCell();
-          if (!cell) return null;
-          const inputs = collectInputs(cell);
-          return inputs[0] ?? null;
-        },
-        { id: cellId, index: cellIndex },
-      );
-
-      const element = handle.asElement();
-      if (!element) {
-        await handle.dispose();
+      // Colab renders interactive widget output (files.upload) inside a sandboxed
+      // output iframe (outputframe.googleusercontent.com). Search all frames.
+      const fileInput = await this.findFileInputAcrossFrames(cellId, cellIndex);
+      if (!fileInput) {
         throw new UploadWidgetNotFoundError(cellId);
       }
-
-      await element.setInputFiles(files);
-      await handle.dispose();
+      await fileInput.setInputFiles(files);
     } catch (err) {
       if (err instanceof UploadWidgetNotFoundError) throw err;
       throw new BrowserError(`Failed to set upload files on cell ${cellId}`, err);
@@ -432,42 +661,33 @@ export class BrowserSession {
 
   async readCellUploadState(cellId: string, cellIndex: number): Promise<CellUploadDomState> {
     const page = this.requirePage();
-    const raw = await page.evaluate(
-      ({ id, index }) => {
-        const findCell = (): Element | null => {
-          const escaped = CSS.escape(id);
-          const byAttr = document.querySelector(`[data-cell-id="${id}"], #${escaped}`);
-          if (byAttr) return byAttr;
-          const cells = document.querySelectorAll('colab-cell, .cell');
-          return cells.item(index) ?? null;
-        };
 
-        const collectInputs = (root: Element | Document | ShadowRoot): HTMLInputElement[] => {
-          const inputs: HTMLInputElement[] = [];
-          root.querySelectorAll('input[type="file"]').forEach((el) => {
-            if (el instanceof HTMLInputElement) inputs.push(el);
-          });
-          root.querySelectorAll('*').forEach((el) => {
-            if (el.shadowRoot) inputs.push(...collectInputs(el.shadowRoot));
-          });
-          return inputs;
+    // Check main frame for cell text/progress, and all frames for file input
+    const mainRaw = await page.evaluate(
+      ({ id, index }) => {
+        const escaped = CSS.escape(id);
+        const selectors = [
+          `[data-cell-id="${id}"]`,
+          `#cell-${escaped}`,
+          `#${escaped}`,
+          'div.cell[role="region"][aria-label^="Cell"]',
+          'div.cell.notebook-cell',
+          'colab-cell',
+          '.cell',
+        ];
+        const findCell = (): Element | null => {
+          for (const selector of selectors) {
+            const el = document.querySelector(selector);
+            if (el) return el;
+          }
+          return document.querySelectorAll('colab-cell, div.cell, .cell').item(index) ?? null;
         };
 
         const cell = findCell();
-        if (!cell) {
-          return {
-            hasFileInput: false,
-            fileInputCount: 0,
-            textContent: '',
-          };
-        }
-
-        const inputs = collectInputs(cell);
+        if (!cell) return { textContent: '', progressValue: undefined as number | undefined, progressMax: undefined as number | undefined };
         const textContent = (cell as HTMLElement).innerText ?? '';
         const progress = cell.querySelector('progress');
         return {
-          hasFileInput: inputs.length > 0,
-          fileInputCount: inputs.length,
           textContent,
           progressValue: progress ? progress.value : undefined,
           progressMax: progress ? progress.max : undefined,
@@ -476,23 +696,336 @@ export class BrowserSession {
       { id: cellId, index: cellIndex },
     );
 
-    return mergeUploadDomState(raw);
+    // Search all frames (including output iframes) for file inputs and upload text.
+    // The Colab files.upload() widget renders inside a sandboxed cross-origin
+    // outputframe.googleusercontent.com iframe — so progress/done text and the
+    // file input itself are only accessible via frame iteration.
+    let fileInputCount = 0;
+    let iframeText = '';
+    let iframeProgressValue: number | undefined;
+    let iframeProgressMax: number | undefined;
+    for (const frame of page.frames()) {
+      try {
+        const frameData = await frame.evaluate(() => {
+          const inputCount = document.querySelectorAll('input[type="file"]').length;
+          const text = document.body?.innerText ?? '';
+          const progress = document.querySelector('progress');
+          return {
+            inputCount,
+            text,
+            progressValue: progress ? (progress as HTMLProgressElement).value : undefined,
+            progressMax: progress ? (progress as HTMLProgressElement).max : undefined,
+          };
+        });
+        fileInputCount += frameData.inputCount;
+        if (frameData.text.trim()) {
+          iframeText += '\n' + frameData.text;
+        }
+        if (iframeProgressValue === undefined && frameData.progressValue !== undefined) {
+          iframeProgressValue = frameData.progressValue;
+          iframeProgressMax = frameData.progressMax;
+        }
+      } catch {
+        // cross-origin or detached frames; skip
+      }
+    }
+
+    const combinedText = [mainRaw.textContent, iframeText].filter(Boolean).join('\n');
+    const progressValue = mainRaw.progressValue ?? iframeProgressValue;
+    const progressMax = mainRaw.progressMax ?? iframeProgressMax;
+
+    return mergeUploadDomState({
+      hasFileInput: fileInputCount > 0,
+      fileInputCount,
+      textContent: combinedText,
+      progressValue,
+      progressMax,
+    });
+  }
+
+  private async findFileInputAcrossFrames(
+    cellId: string,
+    cellIndex: number,
+  ): Promise<import('playwright-core').ElementHandle<HTMLInputElement> | null> {
+    const page = this.requirePage();
+    for (const frame of page.frames()) {
+      try {
+        const handle = await frame.evaluateHandle(
+          () => document.querySelector('input[type="file"]') as HTMLInputElement | null,
+        );
+        const el = handle.asElement() as import('playwright-core').ElementHandle<HTMLInputElement> | null;
+        if (el) return el;
+        await handle.dispose();
+      } catch {
+        // cross-origin or detached frames; skip
+      }
+    }
+    // Fallback: try main frame with cell-scoped DOM search (shadow roots)
+    const handle = await page.evaluateHandle(
+      ({ id, index }) => {
+        const escaped = CSS.escape(id);
+        const selectors = [
+          `[data-cell-id="${id}"]`,
+          `#cell-${escaped}`,
+          `#${escaped}`,
+          'div.cell.notebook-cell',
+          '.cell',
+        ];
+        const findCell = (): Element | null => {
+          for (const selector of selectors) {
+            const el = document.querySelector(selector);
+            if (el) return el;
+          }
+          return document.querySelectorAll('colab-cell, div.cell, .cell').item(index) ?? null;
+        };
+        const collectInputs = (root: Element | Document | ShadowRoot): HTMLInputElement[] => {
+          const inputs: HTMLInputElement[] = Array.from(root.querySelectorAll('input[type="file"]'));
+          root.querySelectorAll('*').forEach((el) => {
+            if (el.shadowRoot) inputs.push(...collectInputs(el.shadowRoot));
+          });
+          return inputs;
+        };
+        const cell = findCell();
+        return cell ? (collectInputs(cell)[0] ?? null) : null;
+      },
+      { id: cellId, index: cellIndex },
+    );
+    const el = handle.asElement() as import('playwright-core').ElementHandle<HTMLInputElement> | null;
+    if (!el) await handle.dispose();
+    return el;
   }
 
   async stopRuntime(): Promise<void> {
     const page = this.requirePage();
     try {
       await page.getByText('Runtime', { exact: true }).first().click();
-      const disconnect = page.getByText(/Disconnect and delete runtime/i);
-      if (await disconnect.count()) {
-        await disconnect.first().click();
+      if (await this.clickRuntimeMenuItem('powerwash-current-vm')) {
         const confirm = page.getByRole('button', { name: /OK|Yes|Disconnect/i });
         if (await confirm.count()) {
           await confirm.first().click();
+        } else {
+          await this.acceptRuntimeChangeConfirmation().catch(() => undefined);
         }
       }
     } catch (err) {
       throw new BrowserError('Failed to stop runtime', err);
+    }
+  }
+
+  // ── Session management (Runtime > Manage sessions) ────────────────────────
+  // DOM (verified 2026-06): mwc-dialog#sessions-dialog[open] holds
+  // <colab-sessions-dialog> with <colab-session class="dialog-table-row">
+  // rows ([iscurrentsession] marks ours). Each row's shadow root has
+  // .session-title / .last-date-column / .ram-usage and an
+  // md-icon-button[data-aria-label="Terminate <title>"]. Footer has
+  // md-text-button.terminate-others and md-text-button[dialogaction="cancel"].
+
+  async listSessions(): Promise<import('../types/index.js').ColabSessionInfo[]> {
+    try {
+      await this.openSessionsDialog();
+      const sessions = await this.readSessionRows();
+      await this.closeSessionsDialog();
+      return sessions;
+    } catch (err) {
+      await this.saveDebugScreenshot('list-sessions-failure');
+      throw new BrowserError('Failed to list Colab sessions', err);
+    }
+  }
+
+  /** Terminate a single session by its dialog title. Returns false if not found. */
+  async terminateSession(title: string): Promise<boolean> {
+    const page = this.requirePage();
+    try {
+      await this.openSessionsDialog();
+      const clicked = await page.evaluate((t) => {
+        const buttons: HTMLElement[] = [];
+        const walk = (root: Document | ShadowRoot | Element, depth: number) => {
+          if (depth > 10) return;
+          for (const el of Array.from(root.querySelectorAll<HTMLElement>('md-icon-button[data-aria-label]'))) {
+            buttons.push(el);
+          }
+          for (const el of Array.from(root.querySelectorAll('*'))) {
+            if ((el as any).shadowRoot) walk((el as any).shadowRoot, depth + 1);
+          }
+        };
+        walk(document, 0);
+        const target = buttons.find(
+          (b) => (b.getAttribute('data-aria-label') ?? '') === `Terminate ${t}`,
+        );
+        if (!target) return false;
+        target.click();
+        return true;
+      }, title);
+
+      if (clicked) {
+        await this.confirmTerminateDialog();
+        await page.waitForTimeout(1500);
+      }
+      await this.closeSessionsDialog();
+      return clicked;
+    } catch (err) {
+      await this.saveDebugScreenshot('terminate-session-failure');
+      throw new BrowserError(`Failed to terminate session "${title}"`, err);
+    }
+  }
+
+  /**
+   * Terminate every session except the current one via the dialog's
+   * "Terminate other sessions" button. Returns how many sessions were closed.
+   */
+  async terminateOtherSessions(): Promise<number> {
+    const page = this.requirePage();
+    try {
+      await this.openSessionsDialog();
+      const before = await this.readSessionRows();
+      const others = before.filter((s) => !s.isCurrent).length;
+      if (others === 0) {
+        await this.closeSessionsDialog();
+        return 0;
+      }
+
+      const clicked = await page.evaluate(() => {
+        const btn = document.querySelector<HTMLElement>(
+          'mwc-dialog#sessions-dialog md-text-button.terminate-others',
+        );
+        if (!btn || btn.hasAttribute('disabled')) return false;
+        btn.click();
+        return true;
+      });
+
+      if (!clicked) {
+        // Button disabled/missing — fall back to terminating rows one by one
+        for (const session of before.filter((s) => !s.isCurrent)) {
+          await page.evaluate((t) => {
+            const buttons: HTMLElement[] = [];
+            const walk = (root: Document | ShadowRoot | Element, depth: number) => {
+              if (depth > 10) return;
+              for (const el of Array.from(root.querySelectorAll<HTMLElement>('md-icon-button[data-aria-label]'))) {
+                buttons.push(el);
+              }
+              for (const el of Array.from(root.querySelectorAll('*'))) {
+                if ((el as any).shadowRoot) walk((el as any).shadowRoot, depth + 1);
+              }
+            };
+            walk(document, 0);
+            buttons.find((b) => (b.getAttribute('data-aria-label') ?? '') === `Terminate ${t}`)?.click();
+          }, session.title);
+          await this.confirmTerminateDialog();
+          await page.waitForTimeout(1000);
+        }
+      } else {
+        await this.confirmTerminateDialog();
+      }
+
+      // Wait for the other rows to disappear
+      const deadline = Date.now() + 30_000;
+      while (Date.now() - deadline < 0) {
+        const rows = await this.readSessionRows();
+        if (rows.filter((s) => !s.isCurrent).length === 0) break;
+        await page.waitForTimeout(1000);
+      }
+
+      await this.closeSessionsDialog();
+      return others;
+    } catch (err) {
+      await this.saveDebugScreenshot('terminate-others-failure');
+      throw new BrowserError('Failed to terminate other sessions', err);
+    }
+  }
+
+  private async openSessionsDialog(): Promise<void> {
+    const page = this.requirePage();
+    const isOpen = () =>
+      page.evaluate(() =>
+        Boolean(document.querySelector('mwc-dialog#sessions-dialog')?.hasAttribute('open')),
+      );
+
+    if (await isOpen()) return;
+
+    await page.locator('#runtime-menu-button').click({ timeout: RUNTIME_DIALOG_TIMEOUT_MS });
+    // goog.ui menu items ignore synthetic element.click() — use a real
+    // Playwright mouse click (same as selectRuntime does)
+    await page
+      .locator('[command="manage-sessions"]')
+      .waitFor({ state: 'visible', timeout: RUNTIME_DIALOG_TIMEOUT_MS });
+    await page.locator('[command="manage-sessions"]').click();
+
+    const deadline = Date.now() + RUNTIME_DIALOG_TIMEOUT_MS;
+    while (Date.now() < deadline) {
+      if (await isOpen()) {
+        // give the session list a moment to populate
+        await page.waitForTimeout(1000);
+        return;
+      }
+      await page.waitForTimeout(250);
+    }
+    throw new BrowserError('Sessions dialog did not open');
+  }
+
+  private async closeSessionsDialog(): Promise<void> {
+    const page = this.requirePage();
+    await page.evaluate(() => {
+      const dialog = document.querySelector('mwc-dialog#sessions-dialog');
+      dialog?.querySelector<HTMLElement>('md-text-button[dialogaction="cancel"]')?.click();
+    });
+    await page.waitForTimeout(500);
+  }
+
+  private async readSessionRows(): Promise<import('../types/index.js').ColabSessionInfo[]> {
+    const page = this.requirePage();
+    return page.evaluate(() => {
+      const rows = new Set<Element>();
+      const walk = (root: Document | ShadowRoot | Element, depth: number) => {
+        if (depth > 10) return;
+        for (const el of Array.from(root.querySelectorAll('colab-session'))) rows.add(el);
+        for (const el of Array.from(root.querySelectorAll('*'))) {
+          if ((el as any).shadowRoot) walk((el as any).shadowRoot, depth + 1);
+        }
+      };
+      walk(document, 0);
+
+      return Array.from(rows).map((row) => {
+        const sr = (row as any).shadowRoot as ShadowRoot | null;
+        const read = (selector: string): string => {
+          const el =
+            sr?.querySelector<HTMLElement>(selector) ?? row.querySelector<HTMLElement>(selector);
+          return (el?.innerText ?? '').trim();
+        };
+        return {
+          title: read('.session-title'),
+          isCurrent: row.hasAttribute('iscurrentsession'),
+          lastExecution: read('.last-date-column'),
+          ramUsed: read('.ram-usage'),
+        };
+      });
+    });
+  }
+
+  /** Accept a "terminate session?" yes-no confirm if Colab shows one. */
+  private async confirmTerminateDialog(): Promise<void> {
+    const page = this.requirePage();
+    const deadline = Date.now() + 3_000;
+    while (Date.now() < deadline) {
+      const clicked = await page
+        .evaluate(() => {
+          for (const d of Array.from(
+            document.querySelectorAll<HTMLElement>('mwc-dialog[open]'),
+          )) {
+            if (d.id === 'sessions-dialog') continue;
+            if (!/terminate/i.test(d.innerText ?? '')) continue;
+            const ok = d.querySelector<HTMLElement>(
+              '[dialogaction="ok"], [slot="primaryAction"]',
+            );
+            if (ok) {
+              ok.click();
+              return true;
+            }
+          }
+          return false;
+        })
+        .catch(() => false);
+      if (clicked) return;
+      await page.waitForTimeout(300);
     }
   }
 
@@ -512,16 +1045,48 @@ export class BrowserSession {
       }
     };
 
-    const start = Date.now();
-    while (Date.now() - start < timeoutMs) {
-      if (await hasColabSignInModal(page)) {
-        await this.dismissColabSignInModalIfPresent(page);
-        await this.resolveAuthWall(page, this.lastConnectOptions);
-        await page.waitForTimeout(2000);
+    const dismissGpuQuotaDialog = async (): Promise<boolean> => {
+      const noGpuText = /cannot connect to (gpu|tpu) backend|usage limits in colab/i;
+      const dialogVisible = await page.getByText(noGpuText).count().then((n) => n > 0).catch(() => false);
+      if (!dialogVisible) return false;
+      // Click "Connect without GPU" to fall back to CPU runtime
+      const fallbackBtn = page.getByRole('button', { name: /connect without (gpu|tpu)/i });
+      if (await fallbackBtn.count()) {
+        await fallbackBtn.first().click({ timeout: 3000 }).catch(() => {});
+        return true;
       }
+      return false;
+    };
 
-      await clickRuntimeConnect();
+    const start = Date.now();
+    let connectingStartMs: number | null = null; // track how long we've been "Connecting"
 
+    // Force-terminate a stuck "Resuming execution" / perpetually Connecting session
+    // via Runtime > Disconnect and delete runtime, then re-click Connect.
+    const forceDisconnectRuntime = async (): Promise<boolean> => {
+      try {
+        await page.getByText('Runtime', { exact: true }).first().click({ timeout: 3000 });
+        await page.waitForTimeout(600);
+        // look for "Disconnect and delete runtime" or "Terminate session" items
+        const discItem = page.getByText(/disconnect and delete runtime|terminate session/i).first();
+        if ((await discItem.count()) === 0) {
+          await page.keyboard.press('Escape');
+          return false;
+        }
+        await discItem.click({ timeout: 3000 });
+        await page.waitForTimeout(800);
+        // Confirm dialog (OK / Yes)
+        await page.getByRole('button', { name: /^(OK|Yes|Disconnect)$/i }).first().click({ timeout: 3000 }).catch(() => {});
+        await page.waitForTimeout(2000);
+        connectingStartMs = null;
+        return true;
+      } catch {
+        await page.keyboard.press('Escape').catch(() => {});
+        return false;
+      }
+    };
+
+    while (Date.now() - start < timeoutMs) {
       if (await hasColabSignInModal(page)) {
         await this.dismissColabSignInModalIfPresent(page);
         await this.resolveAuthWall(page, this.lastConnectOptions);
@@ -529,15 +1094,79 @@ export class BrowserSession {
         continue;
       }
 
-      const allocating = page.getByText(/Allocating runtime/i);
-      const ramDisk = page.getByText(/RAM|Disk/i);
-      const connected = page.getByText(/Connected to/i);
+      // If GPU quota dialog is showing, click "Connect without GPU" and wait
+      if (await dismissGpuQuotaDialog()) {
+        await page.waitForTimeout(3000);
+        connectingStartMs = null;
+        continue;
+      }
 
-      if ((await ramDisk.count()) > 0 || (await connected.count()) > 0) {
+      // Concurrent-session limit ("Too many sessions") — close the dialog and
+      // free up a slot by terminating other sessions, then retry connecting.
+      const sessionLimitHit = await page
+        .evaluate(() => {
+          for (const d of Array.from(document.querySelectorAll<HTMLElement>('mwc-dialog[open]'))) {
+            if (/too many (active )?sessions|maximum number of sessions/i.test(d.innerText ?? '')) {
+              const close = d.querySelector<HTMLElement>(
+                '[dialogaction="cancel"], [dialogaction="ok"], [slot="primaryAction"]',
+              );
+              close?.click();
+              return true;
+            }
+          }
+          return false;
+        })
+        .catch(() => false);
+      if (sessionLimitHit) {
+        await page.waitForTimeout(1000);
+        await this.terminateOtherSessions().catch(() => 0);
+        connectingStartMs = null;
+        await page.waitForTimeout(2000);
+        continue;
+      }
+
+      // Get the current connect button label to decide what to do
+      const btnText = await page.evaluate(() => {
+        const cb = document.querySelector('colab-connect-button') as any;
+        const sr = cb?.shadowRoot;
+        const btn = sr?.querySelector('#connect');
+        return ((btn as HTMLElement | null)?.innerText ?? '').trim();
+      }).catch(() => '');
+
+      // Already connecting — just wait; don't interrupt by clicking again
+      if (/^connecting$/i.test(btnText)) {
+        if (connectingStartMs === null) connectingStartMs = Date.now();
+        // If stuck "Connecting" for > 40s, the session is likely dead —
+        // force-terminate via Runtime > Disconnect and delete runtime
+        if (Date.now() - connectingStartMs > 40_000) {
+          await forceDisconnectRuntime();
+        }
+        await page.waitForTimeout(3000);
+        continue;
+      }
+
+      connectingStartMs = null;
+
+      // Connected: button text is empty (resource bars show) and not allocating
+      if (btnText === '') {
+        const allocating = page.getByText(/Allocating runtime/i);
         if ((await allocating.count()) === 0) {
-          await page.waitForTimeout(5000);
+          await page.waitForTimeout(2000);
           return;
         }
+        // allocating in progress — wait
+        await page.waitForTimeout(3000);
+        continue;
+      }
+
+      // Needs a click: "Connect", "Reconnect", "Connect T4 GPU", etc.
+      await clickRuntimeConnect();
+
+      // Check for GPU quota dialog triggered by the connect click
+      if (await dismissGpuQuotaDialog()) {
+        await page.waitForTimeout(3000);
+        connectingStartMs = null;
+        continue;
       }
 
       await page.waitForTimeout(3000);
@@ -676,6 +1305,14 @@ export class BrowserSession {
           this.awaitingTwoFactorApproval = false;
           await this.persistAuthSession();
           await this.saveAuthDomSnapshot('authenticated');
+          return;
+        }
+
+        if (this.awaitingTwoFactorApproval && !(await hasColabSignInWall(candidate))) {
+          this.page = candidate;
+          this.awaitingTwoFactorApproval = false;
+          await this.persistAuthSession();
+          await this.saveAuthDomSnapshot('authenticated-colab-redirect');
           return;
         }
       }
@@ -1134,10 +1771,21 @@ export class BrowserSession {
     await colabPage.waitForLoadState('networkidle').catch(() => undefined);
 
     if (!(await isColabAuthenticated(colabPage))) {
+      if ((await isColabAppUrl(colabPage.url())) && !(await hasColabSignInWall(colabPage))) {
+        this.page = colabPage;
+        this.awaitingTwoFactorApproval = false;
+        await this.persistAuthSession();
+        await this.saveAuthDomSnapshot('authenticated-colab-redirect');
+        return;
+      }
+
       throw new LoginRequiredError('Login did not complete on Colab');
     }
 
     this.page = colabPage;
+    this.awaitingTwoFactorApproval = false;
+    await this.persistAuthSession();
+    await this.saveAuthDomSnapshot('authenticated');
   }
 
   private async persistAuthSession(): Promise<void> {

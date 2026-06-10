@@ -14,6 +14,7 @@ function createDeps(isConnected = true) {
   const browser = {
     selectRuntime: vi.fn().mockResolvedValue(undefined),
     stopRuntime: vi.fn().mockResolvedValue(undefined),
+    ensureRuntimeConnected: vi.fn().mockResolvedValue(undefined),
   };
   return { proxy, browser, callTool };
 }

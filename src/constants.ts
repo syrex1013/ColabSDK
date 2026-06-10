@@ -51,12 +51,25 @@ export const REQUIRED_TOOLS = [
 ] as const;
 
 export const GPU_TYPES: Record<string, string> = {
-  cpu: 'None (CPU)',
+  cpu: 'CPU',
   t4: 'T4 GPU',
   a100: 'A100 GPU',
   v100: 'v100 GPU',
   l4: 'L4 GPU',
-  tpu: 'TPU v2',
+  tpu: 'v5e-1 TPU',
+};
+
+/**
+ * `value` attribute of the mwc-radio[name="accelerator"] elements in Colab's
+ * "Change runtime type" dialog (inside colab-runtime-attributes-selector).
+ */
+export const ACCELERATOR_VALUES: Record<string, string> = {
+  cpu: '',
+  t4: 'GPU,T4',
+  a100: 'GPU,A100',
+  v100: 'GPU,V100',
+  l4: 'GPU,L4',
+  tpu: 'TPU,V5E1',
 };
 
 export const HEALTH_CHECK_CODE = `

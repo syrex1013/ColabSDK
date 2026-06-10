@@ -37,8 +37,11 @@ Control [Google Colab](https://colab.research.google.com) notebooks from TypeScr
 | **Notebook** | Create, edit, list, move, and remove code and markdown cells |
 | **Execution** | Run cells or arbitrary code, interrupt runs, stream output |
 | **Runtime** | Select GPU type (T4, A100, L4, CPU, TPU) and check health |
+| **Sessions** | List active sessions, terminate one or all others, automatic session-limit handling |
+| **File upload** | Upload local files into `files.upload()` widget cells with progress, `/content` runtime fallback |
+| **Workflows** | Define, load, run, and stream multi-step notebook workflows |
 | **Authentication** | Google login with 2FA, persistent browser sessions |
-| **Reliability** | Keep-alive for headless sessions, typed error hierarchy |
+| **Reliability** | Keep-alive for headless sessions, GPU-quota fallback, typed error hierarchy |
 | **Tooling** | `colab-dev` CLI, `.colabdev/` state directory |
 
 ## Requirements
@@ -109,6 +112,28 @@ try {
 }
 ```
 
+### Step 3 — Sessions, runtimes, and file uploads
+
+```typescript
+// List active sessions and free up slots before requesting a GPU
+const sessions = await client.runtime.sessions();
+await client.runtime.killOtherSessions();
+
+// Switch the runtime type (handles session limits and GPU-quota dialogs)
+await client.runtime.select('t4');
+console.log(await client.runtime.health()); // { alive, hasGpu, gpuName, runtimeType }
+
+// Upload a local file into a files.upload() widget cell, with progress
+const cell = await client.cells.createCode(
+  'from google.colab import files\nuploaded = files.upload()',
+);
+await client.files.upload(cell.cellId, './data.csv', {
+  onProgress: (e) => console.log(e.phase, e.percent),
+});
+```
+
+If the upload widget cannot be used, the SDK automatically falls back to writing the file into `/content` through the runtime. If the account has no GPU quota, runtime selection falls back to CPU instead of hanging.
+
 ## CLI reference
 
 | Command | Description |
@@ -120,6 +145,12 @@ try {
 | `colab-dev cells list` | List notebook cells |
 | `colab-dev cells add "print(1)" --index 0` | Insert a code cell |
 | `colab-dev runtime gpu a100` | Change GPU runtime |
+| `colab-dev runtime sessions` | List active Colab sessions |
+| `colab-dev runtime kill <title>` | Terminate one session by title |
+| `colab-dev runtime kill-others` | Terminate all other sessions |
+| `colab-dev files upload <cell> <paths...>` | Upload local files into a `files.upload()` cell |
+| `colab-dev files list-upload-cells` | Find cells with upload widgets |
+| `colab-dev workflows list\|load\|run\|stop` | Manage notebook workflows |
 | `colab-dev status --health` | Connection and runtime status |
 | `colab-dev stop` | Disconnect and clean up |
 
@@ -146,6 +177,9 @@ Runnable examples live in [`examples/`](examples/). From the repository root:
 | GPU | `bun run example:gpu` | GPU runtime selection |
 | Workflow | `bun run example:workflow` | End-to-end notebook flow |
 | Errors | `bun run example:errors` | Typed error handling |
+| Workflows | `bun run example:workflows` | Workflow management |
+| File upload | `bun run example:upload` | Upload files into widget cells |
+| T4 + upload | `bun run example:t4-upload` | Sessions, T4 runtime switch, file upload |
 | Smoke test | `bun run test:sdk` | Full integration test |
 
 ## Configuration

@@ -68,6 +68,18 @@ export interface RuntimeHealth {
   runtimeType: string;
 }
 
+/** A row in Colab's Runtime > Manage sessions dialog. */
+export interface ColabSessionInfo {
+  /** Notebook title shown in the dialog (e.g. "scratchpad"). */
+  title: string;
+  /** True for the session belonging to this notebook tab. */
+  isCurrent: boolean;
+  /** e.g. "0 minutes ago" */
+  lastExecution: string;
+  /** e.g. "1.16 GB" */
+  ramUsed: string;
+}
+
 export interface RpcTool {
   name: string;
   description?: string;

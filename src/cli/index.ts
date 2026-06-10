@@ -232,6 +232,48 @@ runtime
     }
   });
 
+runtime
+  .command('sessions')
+  .description('List active Colab sessions (Runtime > Manage sessions)')
+  .action(async () => {
+    try {
+      const client = await getClient();
+      await ensureConnected(client, {});
+      const sessions = await client.runtime.sessions();
+      output({ sessions });
+    } catch (err) {
+      printError(err);
+    }
+  });
+
+runtime
+  .command('kill <title>')
+  .description('Terminate one session by its title')
+  .action(async (title: string) => {
+    try {
+      const client = await getClient();
+      await ensureConnected(client, {});
+      const terminated = await client.runtime.killSession(title);
+      output({ status: terminated ? 'terminated' : 'not_found', title });
+    } catch (err) {
+      printError(err);
+    }
+  });
+
+runtime
+  .command('kill-others')
+  .description('Terminate all sessions except the current one')
+  .action(async () => {
+    try {
+      const client = await getClient();
+      await ensureConnected(client, {});
+      const count = await client.runtime.killOtherSessions();
+      output({ status: 'terminated', count });
+    } catch (err) {
+      printError(err);
+    }
+  });
+
 const filesCmd = program.command('files').description('Notebook file upload operations');
 
 filesCmd

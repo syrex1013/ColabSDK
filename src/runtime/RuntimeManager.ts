@@ -7,7 +7,7 @@ import { RuntimeDisconnectedError, wrapError } from '../errors/index.js';
 import type { BrowserSession } from '../browser/BrowserSession.js';
 import { extractCellId, parseCellResult } from '../cells/cellUtils.js';
 import type { ColabProxy } from '../proxy/ColabProxy.js';
-import type { RuntimeHealth, RuntimeType } from '../types/index.js';
+import type { ColabSessionInfo, RuntimeHealth, RuntimeType } from '../types/index.js';
 
 export class RuntimeManager {
   constructor(
@@ -17,10 +17,43 @@ export class RuntimeManager {
 
   async select(gpu: RuntimeType): Promise<void> {
     try {
+      // Free up session slots first — GPU runtimes are frequently refused with
+      // "Too many sessions" when other sessions are still alive.
+      await this.killOtherSessions().catch(() => 0);
       await this.browser.selectRuntime(gpu);
+      // After saving a new runtime type, Colab shows a "Connect <GPU>" button.
+      // Clicking it may trigger a GPU quota dialog ("Connect without GPU" fallback).
+      await this.browser.ensureRuntimeConnected(120_000);
       await this.waitForReconnect();
     } catch (err) {
       throw wrapError(err, `Failed to select runtime ${gpu}`);
+    }
+  }
+
+  /** List active sessions from Runtime > Manage sessions. */
+  async sessions(): Promise<ColabSessionInfo[]> {
+    try {
+      return await this.browser.listSessions();
+    } catch (err) {
+      throw wrapError(err, 'Failed to list sessions');
+    }
+  }
+
+  /** Terminate one session by its title. Returns false if no such session. */
+  async killSession(title: string): Promise<boolean> {
+    try {
+      return await this.browser.terminateSession(title);
+    } catch (err) {
+      throw wrapError(err, `Failed to kill session "${title}"`);
+    }
+  }
+
+  /** Terminate all sessions except the current one. Returns the count closed. */
+  async killOtherSessions(): Promise<number> {
+    try {
+      return await this.browser.terminateOtherSessions();
+    } catch (err) {
+      throw wrapError(err, 'Failed to kill other sessions');
     }
   }
 

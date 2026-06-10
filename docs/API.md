@@ -210,11 +210,26 @@ Accessed via `client.runtime`. **Requires an active connection.**
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `select` | `(gpu: RuntimeType) => Promise<void>` | Change runtime via Colab UI; waits for reconnect |
+| `select` | `(gpu: RuntimeType) => Promise<void>` | Change runtime via Colab UI; kills other sessions first, waits for reconnect |
 | `disconnect` | `() => Promise<void>` | Disconnect the Colab kernel |
 | `health` | `() => Promise<RuntimeHealth>` | Run a health-check cell and return status |
+| `sessions` | `() => Promise<ColabSessionInfo[]>` | List active sessions from Runtime > Manage sessions |
+| `killSession` | `(title: string) => Promise<boolean>` | Terminate one session by title; `false` if not found |
+| `killOtherSessions` | `() => Promise<number>` | Terminate every session except the current; returns count |
 
 **Supported GPU values:** `'cpu'` · `'t4'` · `'a100'` · `'v100'` · `'l4'` · `'tpu'`
+
+### Session limits
+
+Colab caps concurrent sessions per account. `select()` terminates other sessions before changing the runtime type, and the connect loop detects the "Too many sessions" dialog, frees a slot, and retries automatically. If the account has no GPU quota, Colab's "Cannot connect to GPU backend" dialog is answered with **Connect without GPU**, so the session falls back to CPU instead of hanging.
+
+```typescript
+const sessions = await client.runtime.sessions();
+// [{ title: "scratchpad", isCurrent: true, lastExecution: "0 minutes ago", ramUsed: "1.03 GB" }]
+
+await client.runtime.killOtherSessions();
+await client.runtime.select('t4');
+```
 
 ---
 
@@ -421,6 +436,19 @@ interface RuntimeHealth {
 type RuntimeType = 'cpu' | 't4' | 'a100' | 'v100' | 'l4' | 'tpu';
 ```
 
+### `ColabSessionInfo`
+
+A row in Colab's Runtime > Manage sessions dialog.
+
+```typescript
+interface ColabSessionInfo {
+  title: string;         // notebook title, e.g. "scratchpad"
+  isCurrent: boolean;    // true for this notebook's session
+  lastExecution: string; // e.g. "0 minutes ago"
+  ramUsed: string;       // e.g. "1.16 GB"
+}
+```
+
 ---
 
 ## Constants
@@ -430,7 +458,7 @@ type RuntimeType = 'cpu' | 't4' | 'a100' | 'v100' | 'l4' | 'tpu';
 Maps runtime keys to Colab UI labels.
 
 ```typescript
-GPU_TYPES.cpu  // "None (CPU)"
+GPU_TYPES.cpu  // "CPU"
 GPU_TYPES.t4   // "T4 GPU"
 GPU_TYPES.a100 // "A100 GPU"
 ```

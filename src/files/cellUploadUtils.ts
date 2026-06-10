@@ -104,11 +104,17 @@ export function mergeUploadDomState(
       ? Math.round((raw.progressValue! / raw.progressMax) * 100)
       : parsed.progressPercent;
 
+  // The Colab output iframe keeps the file input element visible even after
+  // the upload finishes, so we can't rely on !hasFileInput alone.
+  // Primary signal: "100% done" or explicit completion text in the output.
+  // Secondary signal: file input gone + any uploaded/done indicator.
+  const completionText = /100%\s*done|upload.*complete|saved.*\/content|saving.*100/i.test(raw.textContent);
   const complete =
-    !raw.hasFileInput &&
-    (progressPercent === 100 ||
-      /uploaded|complete|done|saved/i.test(raw.textContent) ||
-      parsed.uploadedFileNames.length > 0);
+    completionText ||
+    (!raw.hasFileInput &&
+      (progressPercent === 100 ||
+        /uploaded|complete|done|saved/i.test(raw.textContent) ||
+        parsed.uploadedFileNames.length > 0));
 
   return {
     hasFileInput: raw.hasFileInput,

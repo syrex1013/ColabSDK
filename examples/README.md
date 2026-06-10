@@ -27,6 +27,7 @@ bun run example:login    # once — saves session to .colabdev/
 | 08 | `08_error_handling.ts` | `bun run example:errors` | Typed `ColabSDKError` hierarchy |
 | 09 | `09_workflow_management.ts` | `bun run example:workflows` | List, load, run, stream, unload workflows |
 | 10 | `10_file_upload.ts` | `bun run example:upload` | Upload local files with progress into `files.upload()` cells |
+| 11 | `11_t4_file_upload.ts` | `bun run example:t4-upload` | Session management, T4 runtime switch, widget file upload |
 | — | `sdk_smoke_test.ts` | `bun run test:sdk` | Full API integration smoke test |
 
 ---
