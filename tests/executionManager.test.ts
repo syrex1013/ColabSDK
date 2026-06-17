@@ -17,6 +17,8 @@ function createDeps() {
   const browser = {
     ensureRuntimeConnected: vi.fn().mockResolvedValue(undefined),
     interruptExecution: vi.fn().mockResolvedValue(undefined),
+    activePage: null as unknown,
+    readPageText: vi.fn().mockResolvedValue(''),
   };
   return { proxy, cells, browser, callTool };
 }
@@ -138,12 +140,63 @@ describe('ExecutionManager', () => {
     });
 
     const manager = new ExecutionManager(() => proxy as never, cells as unknown as CellManager, browser as never);
-    const chunks = [];
+    const chunks: unknown[] = [];
     await expect(async () => {
       for await (const chunk of manager.streamCell('e1')) {
         chunks.push(chunk);
       }
     }).rejects.toThrow(ExecutionError);
+  });
+
+  it('streamCell passes timeoutMs to callTool', async () => {
+    const { proxy, cells, browser, callTool } = createDeps();
+    const cell = { cellId: 't1', cellIndex: 0, cellType: 'code' as const, source: 'x', outputs: [] };
+    cells.resolve.mockResolvedValue(cell);
+    cells.list.mockResolvedValue([{ ...cell, outputs: [{ output_type: 'stream', text: 'ok\n' }] }]);
+    callTool.mockResolvedValue({ structuredContent: { outputs: [], isError: false } });
+
+    const manager = new ExecutionManager(() => proxy as never, cells as unknown as CellManager, browser as never);
+    for await (const _ of manager.streamCell('t1', { timeoutMs: 5_000 })) { /* drain */ }
+    expect(callTool).toHaveBeenCalledWith(TOOL_RUN_CODE_CELL, { cellId: 't1' }, 5_000);
+  });
+
+  it('streamCell uses DOM fallback when MCP has no output', async () => {
+    const { proxy, cells, browser, callTool } = createDeps();
+    const cell = { cellId: 'd1', cellIndex: 0, cellType: 'code' as const, source: 'train()', outputs: [] };
+    cells.resolve.mockResolvedValue(cell);
+    cells.list.mockResolvedValue([{ ...cell, outputs: [] }]);
+
+    let readCount = 0;
+    browser.activePage = {}; // truthy — enables DOM fallback
+    browser.readPageText.mockImplementation(async () => {
+      readCount++;
+      if (readCount === 1) return 'page header'; // baseline (12 chars)
+      return 'page headerstep   0/14000 │ tok/s: 28k\n'; // new content after cell starts
+    });
+
+    callTool.mockImplementation(async () => {
+      await new Promise((r) => setTimeout(r, 10)); // resolves before first 500ms poll
+      return { structuredContent: { outputs: [], isError: false } };
+    });
+
+    const manager = new ExecutionManager(() => proxy as never, cells as unknown as CellManager, browser as never);
+    const chunks: Array<{ type: string; text: string }> = [];
+    for await (const chunk of manager.streamCell('d1')) chunks.push(chunk);
+
+    expect(chunks.some((c) => c.text.includes('step'))).toBe(true);
+    expect(chunks.at(-1)?.type).toBe('result');
+  });
+
+  it('streamCell propagates callTool rejection', async () => {
+    const { proxy, cells, browser, callTool } = createDeps();
+    cells.resolve.mockResolvedValue({ cellId: 'f1', cellIndex: 0, cellType: 'code' as const, source: 'x', outputs: [] });
+    cells.list.mockResolvedValue([]);
+    callTool.mockRejectedValue(new Error('timeout exceeded'));
+
+    const manager = new ExecutionManager(() => proxy as never, cells as unknown as CellManager, browser as never);
+    await expect(async () => {
+      for await (const _ of manager.streamCell('f1')) { /* drain */ }
+    }).rejects.toThrow('timeout exceeded');
   });
 
   it('retries runCell up to 3 times', async () => {

@@ -3,8 +3,10 @@ import { describe, expect, it } from 'vitest';
 import {
   extractCellId,
   extractCells,
+  hasErrorOutput,
   joinSource,
   normalizeCell,
+  outputsToText,
   parseCellResult,
 } from '../src/cells/cellUtils.js';
 
@@ -111,5 +113,36 @@ describe('cellUtils', () => {
   it('extracts cell id from top-level and json content', () => {
     expect(extractCellId({ cellId: 'direct' })).toBe('direct');
     expect(extractCellId({ content: [{ text: '{"cellId":"from-json"}' }] })).toBe('from-json');
+  });
+
+  it('outputsToText handles stream outputs', () => {
+    expect(outputsToText([{ output_type: 'stream', text: ['hello\n', 'world\n'] }])).toBe('hello\nworld\n');
+  });
+
+  it('outputsToText handles execute_result and display_data', () => {
+    expect(outputsToText([{ output_type: 'execute_result', data: { 'text/plain': '42' } }])).toBe('42');
+    expect(outputsToText([{ output_type: 'display_data', data: { 'text/plain': ['fig'] } }])).toBe('fig');
+  });
+
+  it('outputsToText handles error outputs with traceback', () => {
+    const text = outputsToText([
+      { output_type: 'error', ename: 'ValueError', evalue: 'bad input', traceback: ['line1', 'line2'] },
+    ]);
+    expect(text).toContain('ValueError');
+    expect(text).toContain('bad input');
+    expect(text).toContain('line1');
+  });
+
+  it('outputsToText returns empty string for non-arrays', () => {
+    expect(outputsToText(null)).toBe('');
+    expect(outputsToText(undefined)).toBe('');
+    expect(outputsToText([])).toBe('');
+  });
+
+  it('hasErrorOutput detects error type outputs', () => {
+    expect(hasErrorOutput([])).toBe(false);
+    expect(hasErrorOutput([{ output_type: 'stream', text: 'ok' }])).toBe(false);
+    expect(hasErrorOutput([{ output_type: 'error', ename: 'E', evalue: 'v' }])).toBe(true);
+    expect(hasErrorOutput(null)).toBe(false);
   });
 });
