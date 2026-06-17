@@ -224,6 +224,13 @@ export class ColabProxy extends EventEmitter {
       }
     });
 
+    ws.on('error', (err) => {
+      // Absorb socket-level errors so Node.js/bun doesn't throw an uncaught
+      // exception that kills the process.  The 'close' event fires next and
+      // cleans up state, and any pending RPC promises will time out naturally.
+      this.emit('error', err);
+    });
+
     ws.on('close', (code) => {
       this.lastCloseCode = code;
       this.ws = null;

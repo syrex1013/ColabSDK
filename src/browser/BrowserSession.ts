@@ -102,6 +102,10 @@ export class BrowserSession {
         waitUntil: 'domcontentloaded',
       });
 
+      // Wait for the page's auth widgets to render before checking state.
+      // Without this, isColabAuthenticated() may fall through to the cookie check
+      // and return true even when Colab is in guest mode.
+      await this.page.waitForLoadState('networkidle', { timeout: 15_000 }).catch(() => undefined);
       await this.waitForAuthSurface(this.page, 8_000);
       await this.resolveAuthWall(this.page, options);
       await this.dismissColabSignInModalIfPresent(this.page);
@@ -265,11 +269,26 @@ export class BrowserSession {
     }
 
     try {
-      // Open Runtime menu via the known button id
-      await page.locator('#runtime-menu-button').click({ timeout: RUNTIME_DIALOG_TIMEOUT_MS });
-      // Wait for menu item to appear (it has command="change-runtime-type" in light DOM)
-      await page.locator('[command="change-runtime-type"]').waitFor({ state: 'visible', timeout: RUNTIME_DIALOG_TIMEOUT_MS });
-      await page.locator('[command="change-runtime-type"]').click();
+      // Open Runtime menu and click "Change runtime type".
+      // Retry up to 3 times: the item stays hidden while the runtime is in a
+      // transient "Connecting…" state (common when a Drive notebook just opened).
+      const MAX_MENU_ATTEMPTS = 3;
+      let menuOpened = false;
+      for (let attempt = 1; attempt <= MAX_MENU_ATTEMPTS; attempt++) {
+        try {
+          await page.locator('#runtime-menu-button').click({ timeout: RUNTIME_DIALOG_TIMEOUT_MS });
+          await page.locator('[command="change-runtime-type"]').waitFor({ state: 'visible', timeout: RUNTIME_DIALOG_TIMEOUT_MS });
+          await page.locator('[command="change-runtime-type"]').click();
+          menuOpened = true;
+          break;
+        } catch (menuErr) {
+          if (attempt === MAX_MENU_ATTEMPTS) throw menuErr;
+          // Close menu if open, wait for runtime to settle, then retry
+          await page.keyboard.press('Escape').catch(() => {});
+          await page.waitForTimeout(8_000);
+        }
+      }
+      if (!menuOpened) throw new BrowserError('Could not open Change runtime type menu');
 
       // mwc-dialog uses shadow DOM — Playwright's visibility check fails on it,
       // and waitForFunction is blocked by Colab's CSP. Poll with evaluate instead.
@@ -1180,6 +1199,30 @@ export class BrowserSession {
 
     await this.saveDebugScreenshot('runtime-connect-timeout');
     throw new BrowserError('Timed out waiting for Colab runtime to connect');
+  }
+
+  /** Walk every text node in the page (including shadow DOM) and return concatenated content. */
+  async readPageText(): Promise<string> {
+    if (!this.page) return '';
+    try {
+      return await this.page.evaluate((): string => {
+        const parts: string[] = [];
+        const walk = (root: Node): void => {
+          if (root.nodeType === 3) {
+            const v = (root as Text).nodeValue;
+            if (v) parts.push(v);
+            return;
+          }
+          for (const child of Array.from(root.childNodes)) walk(child);
+          const sr = (root as Element & { shadowRoot?: ShadowRoot }).shadowRoot;
+          if (sr) walk(sr);
+        };
+        walk(document);
+        return parts.join('');
+      });
+    } catch {
+      return '';
+    }
   }
 
   async close(): Promise<void> {

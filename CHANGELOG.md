@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-06-17
+
+### Added
+
+- `streamCell(ref, options?)` now accepts `{ timeoutMs?, heartbeatMs? }` — configurable execution timeout (default 180 s) and heartbeat interval (default 30 s)
+- DOM fallback in `streamCell`: when `cells.list()` returns no output for a running cell (e.g. a 55-minute training loop), the method reads page text via Playwright's shadow-DOM walker and yields new text as it appears; avoids duplicate output on completion
+- `BrowserSession.readPageText()` — public shadow-DOM text-node walker, used internally by `streamCell`
+- `outputsToText(outputs)` — converts a Jupyter `outputs` array to plain text; exported from package root
+- `hasErrorOutput(outputs)` — returns true if any output has `output_type === "error"`; exported from package root
+- `stripOutputs(notebookJson)` — strips all cell outputs and execution counts from a notebook JSON string before upload; exported from package root
+- `StreamCellOptions` type exported from package root
+
+### Changed
+
+- `streamCell` no longer yields raw JSON snapshots — it yields incremental text `OutputChunk` objects with `type: 'stdout'`
+- Heartbeat messages (`[cell running… Xs]`) are yielded as `OutputChunk` (type `'stdout'`) instead of written directly to `process.stdout`
+
+## [0.2.1] - 2026-06-10
+
+### Fixed
+
+- WebSocket `error` events on `ColabProxy` are now emitted via EventEmitter instead of thrown as uncaught exceptions
+- `BrowserSession` proxy socket cleanup on `close` event
+
 ## [0.2.0] - 2026-06-10
 
 ### Added

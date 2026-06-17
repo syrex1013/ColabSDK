@@ -377,8 +377,31 @@ export async function hasVisibleColabSignInHeader(page: Page): Promise<boolean> 
   const signInLink = page.locator(
     'a[aria-label="Sign in"][href*="accounts.google.com"], a.gb_0a[href*="ServiceLogin"]',
   );
-  if ((await signInLink.count()) === 0) return false;
-  return signInLink.first().isVisible().catch(() => false);
+  if ((await signInLink.count()) > 0) {
+    const visible = await signInLink.first().isVisible().catch(() => false);
+    if (visible) return true;
+  }
+
+  // Broader fallback: any visible "Sign in" element outside a dialog/modal.
+  // Catches the current Colab guest-mode sign-in button regardless of DOM structure.
+  return page.evaluate(() => {
+    const isVisibleOutsideDialog = (el: Element): boolean => {
+      if (el.closest('[role="dialog"], [role="alertdialog"], mwc-dialog, .mdc-dialog')) return false;
+      const style = window.getComputedStyle(el);
+      if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
+      const rect = el.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0;
+    };
+    for (const el of Array.from(
+      document.querySelectorAll<HTMLElement>('a, button, [role="button"], md-text-button'),
+    )) {
+      if (!isVisibleOutsideDialog(el)) continue;
+      const text = (el.innerText ?? el.textContent ?? '').replace(/\s+/g, ' ').trim();
+      const aria = (el.getAttribute('aria-label') ?? '').replace(/\s+/g, ' ').trim();
+      if (text === 'Sign in' || aria === 'Sign in') return true;
+    }
+    return false;
+  });
 }
 
 export async function isGoogleAuthInProgress(page: Page): Promise<boolean> {

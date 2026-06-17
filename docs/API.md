@@ -192,13 +192,22 @@ Accessed via `client.execute`. **Requires an active connection.**
 | `runCode` | `(code, { cleanup?, index? }) => Promise<CellResult>` | Create, run, and optionally delete a cell |
 | `runAll` | `() => Promise<CellResult[]>` | Run all non-empty code cells sequentially |
 | `interrupt` | `() => Promise<void>` | Interrupt the current kernel execution |
-| `streamCell` | `(ref) => AsyncGenerator<OutputChunk>` | Stream output while a cell runs |
+| `streamCell` | `(ref, options?) => AsyncGenerator<OutputChunk>` | Stream output while a cell runs |
 
 ```typescript
-for await (const chunk of client.execute.streamCell(0)) {
-  console.log(`[${chunk.type}]`, chunk.text);
+for await (const chunk of client.execute.streamCell(0, { timeoutMs: 90 * 60_000 })) {
+  if (chunk.type !== 'result') process.stdout.write(chunk.text);
 }
 ```
+
+### `StreamCellOptions`
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `timeoutMs` | `number` | `180_000` | Maximum wait for cell completion |
+| `heartbeatMs` | `number` | `30_000` | Interval between `[cell running… Xs]` heartbeat chunks |
+
+`streamCell` polls `cells.list()` for incremental output (primary path). When `cells.list()` returns no output for a running cell (e.g. long-running training loops), it falls back to reading the page DOM via Playwright and yielding any new text that has appeared since the cell started. This covers dataset downloads, training progress, and other long-running cells whose output only arrives after completion in the MCP model.
 
 **Throws:** `ExecutionError` on notebook errors; `ExecutionInterruptedError` after `interrupt()`.
 
@@ -448,6 +457,34 @@ interface ColabSessionInfo {
   ramUsed: string;       // e.g. "1.16 GB"
 }
 ```
+
+---
+
+## Notebook utilities
+
+### `stripOutputs(notebookJson: string): string`
+
+Strip all stored cell outputs and execution counts from a Jupyter notebook JSON string. Returns the cleaned JSON. Use this before uploading a notebook to Colab to avoid the DOM being pre-populated with historical output from previous runs.
+
+```typescript
+import { stripOutputs } from '@syrex1013/colab-sdk';
+import { readFileSync, writeFileSync } from 'node:fs';
+
+const stripped = stripOutputs(readFileSync('notebook.ipynb', 'utf-8'));
+writeFileSync('/tmp/upload.ipynb', stripped);
+```
+
+---
+
+## Output utilities
+
+### `outputsToText(outputs: unknown): string`
+
+Convert a Jupyter cell `outputs` array to a plain text string. Handles `stream`, `execute_result`, `display_data`, and `error` output types.
+
+### `hasErrorOutput(outputs: unknown): boolean`
+
+Return `true` if any entry in the `outputs` array has `output_type === 'error'`.
 
 ---
 

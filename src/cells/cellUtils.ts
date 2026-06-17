@@ -1,5 +1,15 @@
 import type { Cell, RawCell } from '../types/index.js';
 
+export interface JupyterOutput {
+  output_type: string;
+  name?: string;
+  text?: string | string[];
+  data?: Record<string, string | string[]>;
+  traceback?: string | string[];
+  ename?: string;
+  evalue?: string;
+}
+
 export function joinSource(source: string | string[] | undefined): string {
   if (!source) return '';
   return Array.isArray(source) ? source.join('') : source;
@@ -50,6 +60,31 @@ export function extractCells(result: Record<string, unknown>): Cell[] {
     [];
 
   return rawCells.map((c, i) => normalizeCell(c, i));
+}
+
+export function outputsToText(outputs: unknown): string {
+  if (!Array.isArray(outputs)) return '';
+  return (outputs as JupyterOutput[])
+    .map((o) => {
+      if (!o || typeof o !== 'object') return '';
+      const joinText = (v: string | string[] | undefined): string =>
+        Array.isArray(v) ? v.join('') : (v ?? '');
+      if (o.output_type === 'stream') return joinText(o.text);
+      if (o.output_type === 'execute_result' || o.output_type === 'display_data') {
+        return joinText((o as JupyterOutput & { data?: Record<string, string | string[]> }).data?.['text/plain']);
+      }
+      if (o.output_type === 'error') {
+        const tb = Array.isArray(o.traceback) ? o.traceback.join('\n') : (o.traceback ?? '');
+        return `${o.ename ?? 'Error'}: ${o.evalue ?? ''}\n${tb}`;
+      }
+      return joinText(o.text);
+    })
+    .join('');
+}
+
+export function hasErrorOutput(outputs: unknown): boolean {
+  if (!Array.isArray(outputs)) return false;
+  return (outputs as JupyterOutput[]).some((o) => o?.output_type === 'error');
 }
 
 export function parseCellResult(result: Record<string, unknown>): {

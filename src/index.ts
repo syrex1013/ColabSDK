@@ -19,3 +19,6 @@ export type { WorkflowDefinition, WorkflowStep } from './workflows/workflowSchem
 export * from './errors/index.js';
 export * from './types/index.js';
 export { GPU_TYPES } from './constants.js';
+export { outputsToText, hasErrorOutput } from './cells/cellUtils.js';
+export { stripOutputs } from './cells/notebookUtils.js';
+export type { StreamCellOptions } from './execution/ExecutionManager.js';

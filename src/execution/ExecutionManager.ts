@@ -5,10 +5,15 @@ import {
   wrapError,
 } from '../errors/index.js';
 import type { CellManager } from '../cells/CellManager.js';
-import { parseCellResult } from '../cells/cellUtils.js';
+import { parseCellResult, outputsToText, hasErrorOutput } from '../cells/cellUtils.js';
 import type { BrowserSession } from '../browser/BrowserSession.js';
 import type { ColabProxy } from '../proxy/ColabProxy.js';
 import type { CellResult, OutputChunk } from '../types/index.js';
+
+export interface StreamCellOptions {
+  timeoutMs?: number;
+  heartbeatMs?: number;
+}
 
 export class ExecutionManager {
   private interrupted = false;
@@ -92,63 +97,125 @@ export class ExecutionManager {
     }
   }
 
-  async *streamCell(ref: string | number): AsyncGenerator<OutputChunk> {
+  async *streamCell(
+    ref: string | number,
+    options: StreamCellOptions = {},
+  ): AsyncGenerator<OutputChunk> {
+    const timeoutMs = options.timeoutMs ?? 180_000;
+    const heartbeatMs = options.heartbeatMs ?? 30_000;
     const cell = await this.cells.resolve(ref);
-    let lastStdout = '';
-    let lastStderr = '';
-    let done = false;
 
-    const runPromise = this.proxy()
-      .callTool(TOOL_RUN_CODE_CELL, { cellId: cell.cellId })
-      .then((result) => {
-        done = true;
-        return result;
-      });
+    let isDone = false;
+    let mcpLastText = '';
+    let domBaseLen = 0;
+    let domLastLen = 0;
+    const pollStart = Date.now();
+    let lastHeartbeat = pollStart;
 
-    while (!done) {
+    const page = this.browser.activePage;
+    if (page) {
+      const baseline = await this.browser.readPageText();
+      domBaseLen = baseline.length;
+      domLastLen = baseline.length;
+    }
+
+    const execPromise = this.proxy()
+      .callTool(TOOL_RUN_CODE_CELL, { cellId: cell.cellId }, timeoutMs)
+      .then((r) => ({ ok: true as const, result: r }))
+      .catch((e: unknown) => ({ ok: false as const, error: e }));
+
+    execPromise.then(() => { isDone = true; }).catch(() => { isDone = true; });
+
+    while (!isDone) {
       await new Promise((r) => setTimeout(r, STREAM_POLL_INTERVAL_MS));
-      const cells = await this.cells.list();
-      const current = cells.find((c) => c.cellId === cell.cellId);
-      const outputs = current?.outputs ?? [];
-      const snapshot = JSON.stringify(outputs);
-      if (snapshot !== JSON.stringify(cell.outputs)) {
-        yield {
-          type: 'stdout',
-          text: snapshot,
-          timestamp: Date.now(),
-        };
+
+      try {
+        const cells = await this.cells.list();
+        const current = cells.find((c) => c.cellId === cell.cellId);
+        const mcpText = outputsToText(current?.outputs);
+
+        if (mcpText.length > mcpLastText.length) {
+          yield { type: 'stdout', text: mcpText.slice(mcpLastText.length), timestamp: Date.now() };
+          mcpLastText = mcpText;
+        } else if (!mcpText && page) {
+          const pageText = await this.browser.readPageText();
+          if (pageText.length > domLastLen) {
+            const chunk = pageText.slice(domLastLen);
+            domLastLen = pageText.length;
+            if (chunk.trim()) {
+              yield { type: 'stdout', text: chunk, timestamp: Date.now() };
+            }
+          }
+        }
+      } catch { /* ignore transient errors */ }
+
+      const now = Date.now();
+      if (now - lastHeartbeat >= heartbeatMs) {
+        lastHeartbeat = now;
+        const elapsed = Math.round((now - pollStart) / 1000);
+        yield { type: 'stdout', text: `[cell running… ${elapsed}s]\n`, timestamp: now };
       }
     }
 
-    const result = await runPromise;
-    const parsed = parseCellResult(result);
+    const done = await execPromise;
+    const usedDomFallback = domLastLen > domBaseLen;
 
-    if (parsed.stdout.length > lastStdout.length) {
-      yield {
-        type: 'stdout',
-        text: parsed.stdout.slice(lastStdout.length),
-        timestamp: Date.now(),
-      };
-      lastStdout = parsed.stdout;
-    }
+    if (done.ok) {
+      const resultOutputs =
+        (done.result as { structuredContent?: { outputs?: unknown[] } }).structuredContent?.outputs ?? [];
 
-    if (parsed.stderr.length > lastStderr.length) {
-      yield {
-        type: 'stderr',
-        text: parsed.stderr.slice(lastStderr.length),
-        timestamp: Date.now(),
-      };
-      lastStderr = parsed.stderr;
-    }
+      if (!usedDomFallback) {
+        const resultText = outputsToText(resultOutputs);
+        if (resultText.length > mcpLastText.length) {
+          yield { type: 'stdout', text: resultText.slice(mcpLastText.length), timestamp: Date.now() };
+          mcpLastText = resultText;
+        }
+        try {
+          const cells = await this.cells.list();
+          const current = cells.find((c) => c.cellId === cell.cellId);
+          const fallbackText = outputsToText(current?.outputs);
+          if (fallbackText.length > mcpLastText.length) {
+            yield { type: 'stdout', text: fallbackText.slice(mcpLastText.length), timestamp: Date.now() };
+            mcpLastText = fallbackText;
+          }
+          if (hasErrorOutput(current?.outputs)) {
+            throw new ExecutionError('Cell execution failed', {
+              stdout: mcpLastText, stderr: '', outputs: current?.outputs ?? [], isError: true,
+            });
+          }
+        } catch (e) {
+          if (e instanceof ExecutionError) throw e;
+        }
+        if (hasErrorOutput(resultOutputs)) {
+          throw new ExecutionError('Cell execution failed', {
+            stdout: mcpLastText, stderr: '', outputs: resultOutputs, isError: true,
+          });
+        }
+      } else {
+        // DOM fallback was used — skip re-yielding full MCP output to avoid duplicates.
+        // Just check for error outputs.
+        if (hasErrorOutput(resultOutputs)) {
+          throw new ExecutionError('Cell execution failed', {
+            stdout: '', stderr: '', outputs: resultOutputs, isError: true,
+          });
+        }
+        try {
+          const cells = await this.cells.list();
+          const current = cells.find((c) => c.cellId === cell.cellId);
+          if (hasErrorOutput(current?.outputs)) {
+            throw new ExecutionError('Cell execution failed', {
+              stdout: '', stderr: '', outputs: current?.outputs ?? [], isError: true,
+            });
+          }
+        } catch (e) {
+          if (e instanceof ExecutionError) throw e;
+        }
+      }
 
-    yield {
-      type: parsed.isError ? 'error' : 'result',
-      text: parsed.isError ? parsed.stderr || parsed.stdout : parsed.stdout,
-      timestamp: Date.now(),
-    };
-
-    if (parsed.isError) {
-      throw new ExecutionError(parsed.stderr || parsed.stdout || 'Cell execution failed', parsed);
+      yield { type: 'result', text: mcpLastText, timestamp: Date.now() };
+    } else {
+      const err = (done as { ok: false; error: unknown }).error;
+      throw err instanceof Error ? err : new ExecutionError('Cell execution failed');
     }
   }
 }
